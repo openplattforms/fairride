@@ -2,13 +2,27 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { Ride, Location } from '@/types/ride';
+import { Location } from '@/types/ride';
 import MapView from '@/components/map/MapView';
 import { Navigation, Phone, MapPin, CheckCircle, ArrowRight, User } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
+interface RideData {
+  id: string;
+  customer_id: string;
+  driver_id: string | null;
+  pickup_lat: number;
+  pickup_lng: number;
+  pickup_address: string | null;
+  dropoff_lat: number;
+  dropoff_lng: number;
+  dropoff_address: string | null;
+  status: string;
+  price: number;
+}
+
 interface ActiveRideProps {
-  ride: Ride;
+  ride: RideData;
   driverId: string;
   currentLocation: Location | null;
   onComplete: () => void;
@@ -16,7 +30,7 @@ interface ActiveRideProps {
 
 export default function ActiveRide({ ride, driverId, currentLocation, onComplete }: ActiveRideProps) {
   const { toast } = useToast();
-  const [rideState, setRideState] = useState<Ride>(ride);
+  const [rideState, setRideState] = useState(ride);
   const [customerInfo, setCustomerInfo] = useState<{ name: string; phone: string } | null>(null);
   const [eta, setEta] = useState<number | null>(null);
   const [speed, setSpeed] = useState<number>(0);
@@ -28,12 +42,15 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
     const fetchCustomer = async () => {
       const { data } = await supabase
         .from('profiles')
-        .select('name, phone')
-        .eq('id', ride.customer_id)
+        .select('full_name, phone')
+        .eq('user_id', ride.customer_id)
         .single();
 
       if (data) {
-        setCustomerInfo(data);
+        setCustomerInfo({
+          name: data.full_name || 'Kunde',
+          phone: data.phone || ''
+        });
       }
     };
 
@@ -58,12 +75,12 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
 
     // Calculate ETA
     const targetLocation = rideState.status === 'arriving' || rideState.status === 'accepted'
-      ? rideState.pickup_location
-      : rideState.dropoff_location;
+      ? { lat: rideState.pickup_lat, lng: rideState.pickup_lng }
+      : { lat: rideState.dropoff_lat, lng: rideState.dropoff_lng };
 
-    const distance = calculateDistance(currentLocation, targetLocation as Location);
+    const distance = calculateDistance(currentLocation, targetLocation);
     setEta(Math.round(distance * 3)); // ~3 min per km
-  }, [currentLocation, rideState.status, rideState.pickup_location, rideState.dropoff_location]);
+  }, [currentLocation, rideState.status]);
 
   // Update driver location in database
   useEffect(() => {
@@ -74,13 +91,15 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
         .from('driver_locations')
         .upsert({
           driver_id: driverId,
-          location: currentLocation,
+          latitude: currentLocation.lat,
+          longitude: currentLocation.lng,
+          speed: speed,
           updated_at: new Date().toISOString(),
-        });
+        }, { onConflict: 'driver_id' });
     };
 
     updateLocation();
-  }, [currentLocation, driverId]);
+  }, [currentLocation, driverId, speed]);
 
   const calculateDistance = (from: Location, to: Location): number => {
     const R = 6371;
@@ -94,7 +113,7 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
     return R * c;
   };
 
-  const updateRideStatus = async (status: Ride['status']) => {
+  const updateRideStatus = async (status: string) => {
     const updates: any = { status };
     
     if (status === 'in_progress') {
@@ -114,13 +133,13 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
       if (status === 'completed') {
         // Award loyalty points to customer
         await supabase.rpc('award_loyalty_points', {
-          customer_id: ride.customer_id,
-          points: Math.floor(ride.price * 10),
+          p_user_id: ride.customer_id,
+          p_points: Math.floor(Number(ride.price) * 10),
         });
 
         toast({
           title: 'Fahrt abgeschlossen!',
-          description: `Du hast ${ride.price.toFixed(2)} € verdient.`,
+          description: `Du hast ${Number(ride.price).toFixed(2)} € verdient.`,
         });
         onComplete();
       } else if (status === 'arriving') {
@@ -140,26 +159,28 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
   const getNextAction = () => {
     switch (rideState.status) {
       case 'accepted':
-        return { label: 'Zum Abholort navigieren', status: 'arriving' as const };
+        return { label: 'Zum Abholort navigieren', status: 'arriving' };
       case 'arriving':
-        return { label: 'Kunde abgeholt', status: 'in_progress' as const };
+        return { label: 'Kunde abgeholt', status: 'in_progress' };
       case 'in_progress':
-        return { label: 'Fahrt abschließen', status: 'completed' as const };
+        return { label: 'Fahrt abschließen', status: 'completed' };
       default:
         return null;
     }
   };
 
   const nextAction = getNextAction();
+  const pickupLocation: Location = { lat: ride.pickup_lat, lng: ride.pickup_lng };
+  const dropoffLocation: Location = { lat: ride.dropoff_lat, lng: ride.dropoff_lng };
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-background">
       {/* Map */}
       <div className="flex-1 relative">
         <MapView
-          center={currentLocation || ride.pickup_location as Location}
-          pickup={ride.pickup_location as Location}
-          dropoff={ride.dropoff_location as Location}
+          center={currentLocation || pickupLocation}
+          pickup={pickupLocation}
+          dropoff={dropoffLocation}
           driverLocation={currentLocation}
           showRoute
           className="h-full"
@@ -167,11 +188,11 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
 
         {/* Speed and ETA */}
         <div className="absolute top-4 left-4 right-4 flex justify-between">
-          <div className="bg-card/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-border">
+          <div className="bg-card/95 backdrop-blur-sm px-4 py-2 rounded-xl border border-border shadow-lg">
             <p className="text-2xl font-bold">{speed} km/h</p>
           </div>
           {eta !== null && (
-            <div className="bg-card/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-border">
+            <div className="bg-card/95 backdrop-blur-sm px-4 py-2 rounded-xl border border-border shadow-lg">
               <p className="text-sm text-muted-foreground">Ankunft in</p>
               <p className="text-xl font-bold">{eta} min</p>
             </div>
@@ -180,7 +201,7 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
       </div>
 
       {/* Ride Info Panel */}
-      <Card className="rounded-t-3xl border-t border-border bg-card animate-slide-up">
+      <Card className="rounded-t-3xl border-t border-border bg-card shadow-2xl animate-slide-up">
         <CardContent className="p-6 space-y-4">
           {/* Customer Info */}
           {customerInfo && (
@@ -210,7 +231,7 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
               }`} />
               <div className="flex-1">
                 <p className="text-xs text-muted-foreground">Abholung</p>
-                <p className="font-medium">{(ride as any).pickup_address || 'Abholort'}</p>
+                <p className="font-medium">{ride.pickup_address || 'Abholort'}</p>
               </div>
               {(rideState.status === 'arriving' || rideState.status === 'accepted') && (
                 <Navigation className="w-5 h-5 text-primary" />
@@ -224,7 +245,7 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
               }`} />
               <div className="flex-1">
                 <p className="text-xs text-muted-foreground">Ziel</p>
-                <p className="font-medium">{(ride as any).dropoff_address || 'Zielort'}</p>
+                <p className="font-medium">{ride.dropoff_address || 'Zielort'}</p>
               </div>
               {rideState.status === 'in_progress' && (
                 <Navigation className="w-5 h-5 text-primary" />
@@ -235,13 +256,13 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
           {/* Price */}
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Verdienst</span>
-            <span className="text-2xl font-bold text-primary">{ride.price.toFixed(2)} €</span>
+            <span className="text-2xl font-bold text-primary">{Number(ride.price).toFixed(2)} €</span>
           </div>
 
           {/* Action Button */}
           {nextAction && (
             <Button
-              className="w-full h-14 text-lg font-semibold"
+              className="w-full h-14 text-lg font-semibold rounded-xl transition-all duration-200 hover:scale-[1.02]"
               onClick={() => updateRideStatus(nextAction.status)}
             >
               {nextAction.status === 'completed' ? (

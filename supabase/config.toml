@@ -1,1 +1,4 @@
 project_id = "wmqcpjrhbdszwxzhliju"
+
+[functions.calculate-price]
+verify_jwt = false
