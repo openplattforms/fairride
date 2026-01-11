@@ -1,6 +1,6 @@
 import { useAuth } from '@/contexts/AuthContext';
 import AuthForm from '@/components/auth/AuthForm';
-import RideBooking from '@/components/customer/RideBooking';
+import CustomerDashboard from '@/components/customer/CustomerDashboard';
 import DriverDashboard from '@/components/driver/DriverDashboard';
 import { Loader2 } from 'lucide-react';
 
@@ -22,11 +22,12 @@ const Index = () => {
     return <AuthForm />;
   }
 
+  // IMPORTANT: Drivers ALWAYS go to DriverDashboard, never to customer panel
   if (role === 'driver') {
     return <DriverDashboard />;
   }
 
-  return <RideBooking />;
+  return <CustomerDashboard />;
 };
 
 export default Index;

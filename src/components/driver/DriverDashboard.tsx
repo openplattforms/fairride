@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGeolocation } from '@/hooks/useGeolocation';
 import { supabase } from '@/integrations/supabase/client';
@@ -9,7 +10,8 @@ import { Location } from '@/types/ride';
 import MapView from '@/components/map/MapView';
 import RideRequest from './RideRequest';
 import ActiveRide from './ActiveRide';
-import { Power, MapPin, Star, TrendingUp } from 'lucide-react';
+import DriverHistory from './DriverHistory';
+import { Power, MapPin, Star, TrendingUp, Menu, LogOut, History, User } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface RideData {
@@ -29,7 +31,7 @@ interface RideData {
 }
 
 export default function DriverDashboard() {
-  const { user } = useAuth();
+  const { user, profile, signOut } = useAuth();
   const { location: currentLocation } = useGeolocation(true);
   const { toast } = useToast();
 
@@ -39,6 +41,8 @@ export default function DriverDashboard() {
   const [activeRide, setActiveRide] = useState<RideData | null>(null);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const [todayRides, setTodayRides] = useState(0);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   // Fetch driver info
   useEffect(() => {
@@ -60,7 +64,7 @@ export default function DriverDashboard() {
     fetchDriver();
   }, [user]);
 
-  // Update driver location continuously
+  // Update driver location every 1 SECOND for live tracking
   useEffect(() => {
     if (!driverId || !currentLocation || !isOnline) return;
 
@@ -76,7 +80,8 @@ export default function DriverDashboard() {
     };
 
     updateLocation();
-    const interval = setInterval(updateLocation, 5000);
+    // Update every 1 second for real-time tracking
+    const interval = setInterval(updateLocation, 1000);
 
     return () => clearInterval(interval);
   }, [driverId, currentLocation, isOnline]);
@@ -225,14 +230,15 @@ export default function DriverDashboard() {
     setActiveRide(null);
   };
 
-  if (activeRide) {
+  // Show history panel
+  if (showHistory && driverId) {
     return (
-      <ActiveRide
-        ride={activeRide}
-        driverId={driverId!}
-        currentLocation={currentLocation}
-        onComplete={handleRideComplete}
-      />
+      <div className="min-h-screen bg-background p-4">
+        <Button variant="ghost" className="mb-4" onClick={() => setShowHistory(false)}>
+          ← Zurück
+        </Button>
+        <DriverHistory driverId={driverId} />
+      </div>
     );
   }
 
@@ -245,8 +251,59 @@ export default function DriverDashboard() {
           className="h-full"
         />
 
+        {/* Menu Button */}
+        <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+          <SheetTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon"
+              className="absolute top-4 right-4 rounded-full bg-card/95 backdrop-blur-sm shadow-lg z-10"
+            >
+              <Menu className="w-5 h-5" />
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="right" className="w-80">
+            <div className="py-6 space-y-6">
+              <div className="flex items-center gap-3 p-4 bg-secondary rounded-xl">
+                <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
+                  <User className="w-6 h-6 text-primary" />
+                </div>
+                <div>
+                  <p className="font-semibold">{profile?.full_name || 'Fahrer'}</p>
+                  <p className="text-sm text-muted-foreground">{user?.email}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start"
+                  onClick={() => {
+                    setShowHistory(true);
+                    setMenuOpen(false);
+                  }}
+                >
+                  <History className="w-5 h-5 mr-3" />
+                  Fahrthistorie
+                </Button>
+              </div>
+
+              <div className="pt-4 border-t border-border">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start text-destructive hover:text-destructive"
+                  onClick={signOut}
+                >
+                  <LogOut className="w-5 h-5 mr-3" />
+                  Abmelden
+                </Button>
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
+
         {/* Online Toggle */}
-        <div className="absolute top-4 left-4 right-4">
+        <div className="absolute top-4 left-4 right-16">
           <Card className="bg-card/95 backdrop-blur-sm border-border shadow-lg">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">

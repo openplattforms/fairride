@@ -91,9 +91,11 @@ export type Database = {
       profiles: {
         Row: {
           avatar_url: string | null
+          cardholder_name: string | null
           created_at: string | null
           first_ride_used: boolean | null
           full_name: string | null
+          iban: string | null
           id: string
           loyalty_points: number | null
           phone: string | null
@@ -102,9 +104,11 @@ export type Database = {
         }
         Insert: {
           avatar_url?: string | null
+          cardholder_name?: string | null
           created_at?: string | null
           first_ride_used?: boolean | null
           full_name?: string | null
+          iban?: string | null
           id?: string
           loyalty_points?: number | null
           phone?: string | null
@@ -113,9 +117,11 @@ export type Database = {
         }
         Update: {
           avatar_url?: string | null
+          cardholder_name?: string | null
           created_at?: string | null
           first_ride_used?: boolean | null
           full_name?: string | null
+          iban?: string | null
           id?: string
           loyalty_points?: number | null
           phone?: string | null
@@ -127,9 +133,12 @@ export type Database = {
       rides: {
         Row: {
           accepted_at: string | null
+          cancellation_fee: number | null
+          cancelled_at: string | null
           completed_at: string | null
           created_at: string | null
           customer_id: string
+          distance_at_cancel_km: number | null
           distance_km: number | null
           driver_id: string | null
           dropoff_address: string | null
@@ -143,15 +152,20 @@ export type Database = {
           pickup_lat: number
           pickup_lng: number
           price: number | null
+          promo_discount: number | null
+          promo_type: string | null
           scheduled_time: string | null
           started_at: string | null
           status: string | null
         }
         Insert: {
           accepted_at?: string | null
+          cancellation_fee?: number | null
+          cancelled_at?: string | null
           completed_at?: string | null
           created_at?: string | null
           customer_id: string
+          distance_at_cancel_km?: number | null
           distance_km?: number | null
           driver_id?: string | null
           dropoff_address?: string | null
@@ -165,15 +179,20 @@ export type Database = {
           pickup_lat: number
           pickup_lng: number
           price?: number | null
+          promo_discount?: number | null
+          promo_type?: string | null
           scheduled_time?: string | null
           started_at?: string | null
           status?: string | null
         }
         Update: {
           accepted_at?: string | null
+          cancellation_fee?: number | null
+          cancelled_at?: string | null
           completed_at?: string | null
           created_at?: string | null
           customer_id?: string
+          distance_at_cancel_km?: number | null
           distance_km?: number | null
           driver_id?: string | null
           dropoff_address?: string | null
@@ -187,6 +206,8 @@ export type Database = {
           pickup_lat?: number
           pickup_lng?: number
           price?: number | null
+          promo_discount?: number | null
+          promo_type?: string | null
           scheduled_time?: string | null
           started_at?: string | null
           status?: string | null
