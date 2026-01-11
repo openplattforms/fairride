@@ -4,18 +4,22 @@ import { User as SupabaseUser, Session } from '@supabase/supabase-js';
 
 interface UserProfile {
   id: string;
-  email: string;
-  name: string;
-  phone: string;
-  role: 'customer' | 'driver';
+  user_id: string;
+  full_name: string | null;
+  phone: string | null;
+  avatar_url: string | null;
   loyalty_points: number;
-  total_rides: number;
   first_ride_used: boolean;
+}
+
+interface UserRole {
+  role: 'customer' | 'driver' | 'admin';
 }
 
 interface AuthContextType {
   user: SupabaseUser | null;
   profile: UserProfile | null;
+  role: UserRole['role'] | null;
   session: Session | null;
   loading: boolean;
   signUp: (email: string, password: string, name: string, phone: string, role: 'customer' | 'driver') => Promise<void>;
@@ -29,6 +33,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SupabaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [role, setRole] = useState<UserRole['role'] | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -40,9 +45,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session?.user) {
         setTimeout(async () => {
           await fetchProfile(session.user.id);
+          await fetchRole(session.user.id);
         }, 0);
       } else {
         setProfile(null);
+        setRole(null);
       }
       setLoading(false);
     });
@@ -52,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchProfile(session.user.id);
+        fetchRole(session.user.id);
       }
       setLoading(false);
     });
@@ -63,11 +71,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .single();
 
     if (data && !error) {
       setProfile(data as UserProfile);
+    }
+  };
+
+  const fetchRole = async (userId: string) => {
+    const { data, error } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', userId)
+      .single();
+
+    if (data && !error) {
+      setRole(data.role as UserRole['role']);
     }
   };
 
@@ -77,42 +97,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       options: {
         emailRedirectTo: window.location.origin,
-        data: { name, phone, role }
+        data: { full_name: name }
       }
     });
 
     if (error) throw error;
 
     if (data.user) {
+      // Update profile with phone (profile is auto-created by trigger)
       const { error: profileError } = await supabase
         .from('profiles')
-        .insert({
-          id: data.user.id,
-          email,
-          name,
-          phone,
-          role,
-          loyalty_points: 0,
-          total_rides: 0,
-          first_ride_used: false
-        });
+        .update({ full_name: name, phone })
+        .eq('user_id', data.user.id);
 
-      if (profileError) throw profileError;
+      if (profileError) console.error('Profile update error:', profileError);
 
+      // Add role if driver (customer is default)
       if (role === 'driver') {
+        const { error: roleError } = await supabase
+          .from('user_roles')
+          .insert({ user_id: data.user.id, role: 'driver' });
+
+        if (roleError) console.error('Role insert error:', roleError);
+
+        // Create driver record
         const { error: driverError } = await supabase
           .from('drivers')
           .insert({
             user_id: data.user.id,
-            name,
-            phone,
-            vehicle_type: 'Standard',
+            vehicle_model: 'Standard',
             vehicle_plate: '',
-            rating: 5.0,
             is_online: false
           });
 
-        if (driverError) throw driverError;
+        if (driverError) console.error('Driver insert error:', driverError);
       }
     }
   };
@@ -126,6 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
     setProfile(null);
+    setRole(null);
   };
 
   const updateProfile = async (updates: Partial<UserProfile>) => {
@@ -134,14 +153,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { error } = await supabase
       .from('profiles')
       .update(updates)
-      .eq('id', user.id);
+      .eq('user_id', user.id);
 
     if (error) throw error;
     await fetchProfile(user.id);
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signUp, signIn, signOut, updateProfile }}>
+    <AuthContext.Provider value={{ user, profile, role, session, loading, signUp, signIn, signOut, updateProfile }}>
       {children}
     </AuthContext.Provider>
   );

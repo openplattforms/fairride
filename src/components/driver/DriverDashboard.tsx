@@ -1,48 +1,64 @@
 import { useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGeolocation } from '@/hooks/useGeolocation';
 import { supabase } from '@/integrations/supabase/client';
-import { Ride, Location } from '@/types/ride';
+import { Location } from '@/types/ride';
 import MapView from '@/components/map/MapView';
 import RideRequest from './RideRequest';
 import ActiveRide from './ActiveRide';
 import { Power, MapPin, Star, TrendingUp } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
+interface RideData {
+  id: string;
+  customer_id: string;
+  driver_id: string | null;
+  pickup_lat: number;
+  pickup_lng: number;
+  pickup_address: string | null;
+  dropoff_lat: number;
+  dropoff_lng: number;
+  dropoff_address: string | null;
+  status: string;
+  price: number;
+  distance_km: number | null;
+  duration_minutes: number | null;
+}
+
 export default function DriverDashboard() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const { location: currentLocation } = useGeolocation(true);
   const { toast } = useToast();
 
   const [isOnline, setIsOnline] = useState(false);
   const [driverId, setDriverId] = useState<string | null>(null);
-  const [pendingRides, setPendingRides] = useState<Ride[]>([]);
-  const [activeRide, setActiveRide] = useState<Ride | null>(null);
+  const [pendingRides, setPendingRides] = useState<RideData[]>([]);
+  const [activeRide, setActiveRide] = useState<RideData | null>(null);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const [todayRides, setTodayRides] = useState(0);
 
   // Fetch driver info
   useEffect(() => {
     const fetchDriver = async () => {
-      if (!profile) return;
+      if (!user) return;
 
       const { data } = await supabase
         .from('drivers')
         .select('*')
-        .eq('user_id', profile.id)
+        .eq('user_id', user.id)
         .single();
 
       if (data) {
         setDriverId(data.id);
-        setIsOnline(data.is_online);
+        setIsOnline(data.is_online || false);
       }
     };
 
     fetchDriver();
-  }, [profile]);
+  }, [user]);
 
   // Update driver location continuously
   useEffect(() => {
@@ -53,9 +69,10 @@ export default function DriverDashboard() {
         .from('driver_locations')
         .upsert({
           driver_id: driverId,
-          location: currentLocation,
+          latitude: currentLocation.lat,
+          longitude: currentLocation.lng,
           updated_at: new Date().toISOString(),
-        });
+        }, { onConflict: 'driver_id' });
     };
 
     updateLocation();
@@ -76,7 +93,7 @@ export default function DriverDashboard() {
         .is('driver_id', null);
 
       if (data) {
-        setPendingRides(data as any);
+        setPendingRides(data as RideData[]);
       }
     };
 
@@ -90,7 +107,7 @@ export default function DriverDashboard() {
         table: 'rides',
       }, (payload) => {
         if (payload.eventType === 'INSERT' && payload.new.status === 'pending') {
-          setPendingRides(prev => [...prev, payload.new as any]);
+          setPendingRides(prev => [...prev, payload.new as RideData]);
           toast({
             title: 'Neue Fahrtanfrage!',
             description: 'Eine neue Fahrt wartet auf dich.',
@@ -98,7 +115,7 @@ export default function DriverDashboard() {
         } else if (payload.eventType === 'UPDATE') {
           setPendingRides(prev => prev.filter(r => r.id !== payload.new.id));
           if (payload.new.driver_id === driverId) {
-            setActiveRide(payload.new as any);
+            setActiveRide(payload.new as RideData);
           }
         } else if (payload.eventType === 'DELETE') {
           setPendingRides(prev => prev.filter(r => r.id !== payload.old.id));
@@ -121,10 +138,10 @@ export default function DriverDashboard() {
         .select('*')
         .eq('driver_id', driverId)
         .in('status', ['accepted', 'arriving', 'in_progress'])
-        .single();
+        .maybeSingle();
 
       if (data) {
-        setActiveRide(data as any);
+        setActiveRide(data as RideData);
       }
     };
 
@@ -148,7 +165,7 @@ export default function DriverDashboard() {
 
       if (data) {
         setTodayRides(data.length);
-        setTodayEarnings(data.reduce((sum, ride) => sum + ride.price, 0));
+        setTodayEarnings(data.reduce((sum, ride) => sum + Number(ride.price), 0));
       }
     };
 
@@ -173,7 +190,7 @@ export default function DriverDashboard() {
     });
   };
 
-  const handleAcceptRide = async (ride: Ride) => {
+  const handleAcceptRide = async (ride: RideData) => {
     if (!driverId) return;
 
     const { error } = await supabase
@@ -181,6 +198,7 @@ export default function DriverDashboard() {
       .update({
         driver_id: driverId,
         status: 'accepted',
+        accepted_at: new Date().toISOString(),
       })
       .eq('id', ride.id)
       .eq('status', 'pending');
@@ -193,6 +211,14 @@ export default function DriverDashboard() {
         description: 'Navigiere zum Abholort.',
       });
     }
+  };
+
+  const handleDeclineRide = (rideId: string) => {
+    setPendingRides(prev => prev.filter(r => r.id !== rideId));
+    toast({
+      title: 'Fahrt abgelehnt',
+      description: 'Du hast diese Fahrt abgelehnt.',
+    });
   };
 
   const handleRideComplete = () => {
@@ -211,7 +237,7 @@ export default function DriverDashboard() {
   }
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-background">
       {/* Map */}
       <div className="flex-1 relative">
         <MapView
@@ -221,11 +247,11 @@ export default function DriverDashboard() {
 
         {/* Online Toggle */}
         <div className="absolute top-4 left-4 right-4">
-          <Card className="bg-card/90 backdrop-blur-sm border-border">
+          <Card className="bg-card/95 backdrop-blur-sm border-border shadow-lg">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-primary animate-pulse' : 'bg-muted-foreground'}`} />
+                  <div className={`w-3 h-3 rounded-full transition-colors ${isOnline ? 'bg-primary animate-pulse' : 'bg-muted-foreground'}`} />
                   <span className="font-medium">{isOnline ? 'Online' : 'Offline'}</span>
                 </div>
                 <Switch
@@ -239,7 +265,7 @@ export default function DriverDashboard() {
 
         {/* Current location indicator */}
         {currentLocation && (
-          <div className="absolute bottom-32 right-4 bg-card/90 backdrop-blur-sm p-3 rounded-lg border border-border">
+          <div className="absolute bottom-32 right-4 bg-card/95 backdrop-blur-sm p-3 rounded-xl border border-border shadow-lg">
             <div className="flex items-center gap-2 text-sm">
               <MapPin className="w-4 h-4 text-primary" />
               <span>GPS aktiv</span>
@@ -249,18 +275,18 @@ export default function DriverDashboard() {
       </div>
 
       {/* Stats & Requests Panel */}
-      <Card className="rounded-t-3xl border-t border-border bg-card animate-slide-up">
+      <Card className="rounded-t-3xl border-t border-border bg-card shadow-2xl animate-slide-up">
         <CardContent className="p-6 space-y-4">
           {/* Today's Stats */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-secondary rounded-lg p-4">
+            <div className="bg-secondary rounded-xl p-4">
               <div className="flex items-center gap-2 text-muted-foreground mb-1">
                 <TrendingUp className="w-4 h-4" />
                 <span className="text-sm">Heute verdient</span>
               </div>
               <p className="text-2xl font-bold">{todayEarnings.toFixed(2)} €</p>
             </div>
-            <div className="bg-secondary rounded-lg p-4">
+            <div className="bg-secondary rounded-xl p-4">
               <div className="flex items-center gap-2 text-muted-foreground mb-1">
                 <Star className="w-4 h-4" />
                 <span className="text-sm">Fahrten heute</span>
@@ -279,6 +305,7 @@ export default function DriverDashboard() {
                   ride={ride}
                   currentLocation={currentLocation}
                   onAccept={() => handleAcceptRide(ride)}
+                  onDecline={() => handleDeclineRide(ride.id)}
                 />
               ))}
             </div>
@@ -293,7 +320,7 @@ export default function DriverDashboard() {
 
           {!isOnline && (
             <div className="text-center py-8">
-              <Button onClick={toggleOnline} size="lg" className="px-8">
+              <Button onClick={toggleOnline} size="lg" className="px-8 rounded-xl">
                 <Power className="w-5 h-5 mr-2" />
                 Online gehen
               </Button>

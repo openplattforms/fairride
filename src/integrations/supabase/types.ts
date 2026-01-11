@@ -14,16 +14,287 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      driver_locations: {
+        Row: {
+          driver_id: string
+          heading: number | null
+          id: string
+          latitude: number
+          longitude: number
+          speed: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          driver_id: string
+          heading?: number | null
+          id?: string
+          latitude: number
+          longitude: number
+          speed?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          driver_id?: string
+          heading?: number | null
+          id?: string
+          latitude?: number
+          longitude?: number
+          speed?: number | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "driver_locations_driver_id_fkey"
+            columns: ["driver_id"]
+            isOneToOne: true
+            referencedRelation: "drivers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      drivers: {
+        Row: {
+          created_at: string | null
+          id: string
+          is_online: boolean | null
+          rating: number | null
+          total_rides: number | null
+          updated_at: string | null
+          user_id: string
+          vehicle_model: string | null
+          vehicle_plate: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          is_online?: boolean | null
+          rating?: number | null
+          total_rides?: number | null
+          updated_at?: string | null
+          user_id: string
+          vehicle_model?: string | null
+          vehicle_plate?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          is_online?: boolean | null
+          rating?: number | null
+          total_rides?: number | null
+          updated_at?: string | null
+          user_id?: string
+          vehicle_model?: string | null
+          vehicle_plate?: string | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string | null
+          first_ride_used: boolean | null
+          full_name: string | null
+          id: string
+          loyalty_points: number | null
+          phone: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string | null
+          first_ride_used?: boolean | null
+          full_name?: string | null
+          id?: string
+          loyalty_points?: number | null
+          phone?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string | null
+          first_ride_used?: boolean | null
+          full_name?: string | null
+          id?: string
+          loyalty_points?: number | null
+          phone?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      rides: {
+        Row: {
+          accepted_at: string | null
+          completed_at: string | null
+          created_at: string | null
+          customer_id: string
+          distance_km: number | null
+          driver_id: string | null
+          dropoff_address: string | null
+          dropoff_lat: number
+          dropoff_lng: number
+          duration_minutes: number | null
+          first_ride_discount: boolean | null
+          id: string
+          loyalty_points_earned: number | null
+          pickup_address: string | null
+          pickup_lat: number
+          pickup_lng: number
+          price: number | null
+          scheduled_time: string | null
+          started_at: string | null
+          status: string | null
+        }
+        Insert: {
+          accepted_at?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          customer_id: string
+          distance_km?: number | null
+          driver_id?: string | null
+          dropoff_address?: string | null
+          dropoff_lat: number
+          dropoff_lng: number
+          duration_minutes?: number | null
+          first_ride_discount?: boolean | null
+          id?: string
+          loyalty_points_earned?: number | null
+          pickup_address?: string | null
+          pickup_lat: number
+          pickup_lng: number
+          price?: number | null
+          scheduled_time?: string | null
+          started_at?: string | null
+          status?: string | null
+        }
+        Update: {
+          accepted_at?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          customer_id?: string
+          distance_km?: number | null
+          driver_id?: string | null
+          dropoff_address?: string | null
+          dropoff_lat?: number
+          dropoff_lng?: number
+          duration_minutes?: number | null
+          first_ride_discount?: boolean | null
+          id?: string
+          loyalty_points_earned?: number | null
+          pickup_address?: string | null
+          pickup_lat?: number
+          pickup_lng?: number
+          price?: number | null
+          scheduled_time?: string | null
+          started_at?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rides_driver_id_fkey"
+            columns: ["driver_id"]
+            isOneToOne: false
+            referencedRelation: "drivers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sepa_transactions: {
+        Row: {
+          amount: number
+          cardholder_name: string | null
+          created_at: string | null
+          customer_id: string
+          driver_id: string
+          iban_last4: string | null
+          id: string
+          processed_at: string | null
+          ride_id: string
+          status: string | null
+        }
+        Insert: {
+          amount: number
+          cardholder_name?: string | null
+          created_at?: string | null
+          customer_id: string
+          driver_id: string
+          iban_last4?: string | null
+          id?: string
+          processed_at?: string | null
+          ride_id: string
+          status?: string | null
+        }
+        Update: {
+          amount?: number
+          cardholder_name?: string | null
+          created_at?: string | null
+          customer_id?: string
+          driver_id?: string
+          iban_last4?: string | null
+          id?: string
+          processed_at?: string | null
+          ride_id?: string
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sepa_transactions_driver_id_fkey"
+            columns: ["driver_id"]
+            isOneToOne: false
+            referencedRelation: "drivers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sepa_transactions_ride_id_fkey"
+            columns: ["ride_id"]
+            isOneToOne: false
+            referencedRelation: "rides"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string | null
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      award_loyalty_points: {
+        Args: { p_points: number; p_user_id: string }
+        Returns: undefined
+      }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "customer" | "driver" | "admin"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +421,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["customer", "driver", "admin"],
+    },
   },
 } as const

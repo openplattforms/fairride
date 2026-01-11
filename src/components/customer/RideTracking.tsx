@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { Location, Ride } from '@/types/ride';
+import { Location } from '@/types/ride';
 import MapView from '@/components/map/MapView';
 import { Phone, MessageCircle, X, Car, Clock, MapPin } from 'lucide-react';
 
@@ -11,16 +11,32 @@ interface RideTrackingProps {
   onCancel: () => void;
 }
 
+interface RideData {
+  id: string;
+  customer_id: string;
+  driver_id: string | null;
+  pickup_lat: number;
+  pickup_lng: number;
+  pickup_address: string | null;
+  dropoff_lat: number;
+  dropoff_lng: number;
+  dropoff_address: string | null;
+  status: string;
+  price: number;
+}
+
+interface DriverInfo {
+  full_name: string | null;
+  phone: string | null;
+  vehicle_model: string | null;
+  vehicle_plate: string | null;
+  rating: number;
+}
+
 export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
-  const [ride, setRide] = useState<Ride | null>(null);
+  const [ride, setRide] = useState<RideData | null>(null);
   const [driverLocation, setDriverLocation] = useState<Location | null>(null);
-  const [driverInfo, setDriverInfo] = useState<{
-    name: string;
-    phone: string;
-    vehicle_type: string;
-    vehicle_plate: string;
-    rating: number;
-  } | null>(null);
+  const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
   const [eta, setEta] = useState<number | null>(null);
   const [speed, setSpeed] = useState<number | null>(null);
 
@@ -34,7 +50,7 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
         .single();
       
       if (data) {
-        setRide(data as any);
+        setRide(data as RideData);
         if (data.driver_id) {
           fetchDriverInfo(data.driver_id);
         }
@@ -51,7 +67,7 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
         table: 'rides',
         filter: `id=eq.${rideId}`,
       }, (payload) => {
-        setRide(payload.new as any);
+        setRide(payload.new as RideData);
         if (payload.new.driver_id && !driverInfo) {
           fetchDriverInfo(payload.new.driver_id);
         }
@@ -67,6 +83,21 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
   useEffect(() => {
     if (!ride?.driver_id) return;
 
+    const fetchInitialLocation = async () => {
+      const { data } = await supabase
+        .from('driver_locations')
+        .select('latitude, longitude, speed')
+        .eq('driver_id', ride.driver_id)
+        .single();
+      
+      if (data) {
+        setDriverLocation({ lat: data.latitude, lng: data.longitude });
+        setSpeed(data.speed || 0);
+      }
+    };
+
+    fetchInitialLocation();
+
     const subscription = supabase
       .channel(`driver-location-${ride.driver_id}`)
       .on('postgres_changes', {
@@ -75,23 +106,18 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
         table: 'driver_locations',
         filter: `driver_id=eq.${ride.driver_id}`,
       }, (payload) => {
-        const newLocation = payload.new as any;
+        const newData = payload.new as any;
+        const newLocation = { lat: newData.latitude, lng: newData.longitude };
         
-        // Calculate speed if we have previous location
-        if (driverLocation && newLocation.location) {
-          const distance = calculateDistance(driverLocation, newLocation.location);
-          const timeInHours = 5 / 3600; // 5 seconds update interval
-          setSpeed(Math.round(distance / timeInHours));
-        }
-
-        setDriverLocation(newLocation.location);
+        setDriverLocation(newLocation);
+        setSpeed(newData.speed || 0);
         
         // Calculate ETA
-        if (newLocation.location && ride) {
+        if (ride) {
           const targetLocation = ride.status === 'arriving' 
-            ? ride.pickup_location 
-            : ride.dropoff_location;
-          const distance = calculateDistance(newLocation.location, targetLocation as Location);
+            ? { lat: ride.pickup_lat, lng: ride.pickup_lng }
+            : { lat: ride.dropoff_lat, lng: ride.dropoff_lng };
+          const distance = calculateDistance(newLocation, targetLocation);
           setEta(Math.round(distance * 3)); // ~3 min per km
         }
       })
@@ -100,17 +126,31 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
     return () => {
       subscription.unsubscribe();
     };
-  }, [ride?.driver_id, driverLocation, ride]);
+  }, [ride?.driver_id, ride?.status]);
 
   const fetchDriverInfo = async (driverId: string) => {
-    const { data } = await supabase
+    // First get driver data
+    const { data: driverData } = await supabase
       .from('drivers')
-      .select('name, phone, vehicle_type, vehicle_plate, rating')
+      .select('user_id, vehicle_model, vehicle_plate, rating')
       .eq('id', driverId)
       .single();
     
-    if (data) {
-      setDriverInfo(data);
+    if (driverData) {
+      // Then get profile for name/phone
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('full_name, phone')
+        .eq('user_id', driverData.user_id)
+        .single();
+
+      setDriverInfo({
+        full_name: profileData?.full_name || 'Fahrer',
+        phone: profileData?.phone || '',
+        vehicle_model: driverData.vehicle_model,
+        vehicle_plate: driverData.vehicle_plate,
+        rating: Number(driverData.rating) || 5.0,
+      });
     }
   };
 
@@ -153,7 +193,7 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
 
   if (!ride) {
     return (
-      <div className="h-screen flex items-center justify-center">
+      <div className="h-screen flex items-center justify-center bg-background">
         <div className="animate-pulse text-center">
           <Car className="w-16 h-16 mx-auto mb-4 text-primary" />
           <p className="text-muted-foreground">Lade Fahrtdetails...</p>
@@ -162,22 +202,25 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
     );
   }
 
+  const pickupLocation: Location = { lat: ride.pickup_lat, lng: ride.pickup_lng };
+  const dropoffLocation: Location = { lat: ride.dropoff_lat, lng: ride.dropoff_lng };
+
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-background">
       {/* Map */}
       <div className="flex-1 relative">
         <MapView
-          center={driverLocation || ride.pickup_location as Location}
-          pickup={ride.pickup_location as Location}
-          dropoff={ride.dropoff_location as Location}
+          center={driverLocation || pickupLocation}
+          pickup={pickupLocation}
+          dropoff={dropoffLocation}
           driverLocation={driverLocation}
-          showRoute={!!ride.pickup_location && !!ride.dropoff_location}
+          showRoute
           className="h-full"
         />
 
         {/* Status Badge */}
         <div className="absolute top-4 left-4 right-4">
-          <div className="bg-card/90 backdrop-blur-sm px-4 py-3 rounded-lg border border-border">
+          <div className="bg-card/95 backdrop-blur-sm px-4 py-3 rounded-xl border border-border shadow-lg">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-3 h-3 bg-primary rounded-full animate-pulse" />
@@ -186,7 +229,7 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
               {eta && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Clock className="w-4 h-4" />
-                  <span>{eta} min</span>
+                  <span className="font-semibold">{eta} min</span>
                 </div>
               )}
             </div>
@@ -195,14 +238,14 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
 
         {/* Speed indicator */}
         {speed !== null && ride.status !== 'pending' && (
-          <div className="absolute top-20 right-4 bg-card/90 backdrop-blur-sm px-3 py-2 rounded-lg border border-border">
-            <p className="text-lg font-bold">{speed} km/h</p>
+          <div className="absolute top-20 right-4 bg-card/95 backdrop-blur-sm px-4 py-2 rounded-xl border border-border shadow-lg">
+            <p className="text-xl font-bold">{Math.round(speed)} km/h</p>
           </div>
         )}
       </div>
 
       {/* Driver Info Panel */}
-      <Card className="rounded-t-3xl border-t border-border bg-card animate-slide-up">
+      <Card className="rounded-t-3xl border-t border-border bg-card shadow-2xl animate-slide-up">
         <CardContent className="p-6 space-y-4">
           {driverInfo ? (
             <>
@@ -212,13 +255,13 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
                   <Car className="w-7 h-7 text-primary" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-semibold text-lg">{driverInfo.name}</h3>
+                  <h3 className="font-semibold text-lg">{driverInfo.full_name}</h3>
                   <p className="text-sm text-muted-foreground">
-                    {driverInfo.vehicle_type} • {driverInfo.vehicle_plate}
+                    {driverInfo.vehicle_model} • {driverInfo.vehicle_plate}
                   </p>
                   <div className="flex items-center gap-1 mt-1">
-                    <span className="text-warning">★</span>
-                    <span className="text-sm">{driverInfo.rating.toFixed(1)}</span>
+                    <span className="text-yellow-500">★</span>
+                    <span className="text-sm font-medium">{driverInfo.rating.toFixed(1)}</span>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -237,22 +280,22 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
                   <div className="w-3 h-3 bg-primary rounded-full mt-1.5" />
                   <div>
                     <p className="text-sm text-muted-foreground">Abholung</p>
-                    <p className="font-medium">{(ride as any).pickup_address || 'Abholort'}</p>
+                    <p className="font-medium">{ride.pickup_address || 'Abholort'}</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3">
                   <MapPin className="w-4 h-4 text-destructive mt-1" />
                   <div>
                     <p className="text-sm text-muted-foreground">Ziel</p>
-                    <p className="font-medium">{(ride as any).dropoff_address || 'Zielort'}</p>
+                    <p className="font-medium">{ride.dropoff_address || 'Zielort'}</p>
                   </div>
                 </div>
               </div>
 
               {/* Price */}
-              <div className="flex items-center justify-between py-3 px-4 bg-secondary rounded-lg">
+              <div className="flex items-center justify-between py-3 px-4 bg-secondary rounded-xl">
                 <span className="text-muted-foreground">Preis</span>
-                <span className="font-bold text-xl">{ride.price.toFixed(2)} €</span>
+                <span className="font-bold text-2xl">{Number(ride.price).toFixed(2)} €</span>
               </div>
             </>
           ) : (
@@ -266,7 +309,7 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
           {ride.status === 'pending' && (
             <Button
               variant="outline"
-              className="w-full"
+              className="w-full rounded-xl"
               onClick={handleCancelRide}
             >
               <X className="w-4 h-4 mr-2" />
