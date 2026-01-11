@@ -1,7 +1,9 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { Gift, Star, Trophy, Zap } from 'lucide-react';
 
 const rewards = [
@@ -13,11 +15,30 @@ const rewards = [
 
 export default function LoyaltyPanel() {
   const { profile } = useAuth();
+  const [totalRides, setTotalRides] = useState<number | null>(null);
+
+  useEffect(() => {
+    const loadTotalRides = async () => {
+      if (!profile?.user_id) return;
+      const { count } = await supabase
+        .from('rides')
+        .select('id', { count: 'exact', head: true })
+        .eq('customer_id', profile.user_id);
+      setTotalRides(typeof count === 'number' ? count : null);
+    };
+
+    loadTotalRides();
+  }, [profile?.user_id]);
+
+  const currentPoints = profile?.loyalty_points ?? 0;
+
+  const nextReward = useMemo(
+    () => rewards.find((r) => r.points > currentPoints) || rewards[rewards.length - 1],
+    [currentPoints]
+  );
 
   if (!profile) return null;
 
-  const currentPoints = profile.loyalty_points;
-  const nextReward = rewards.find(r => r.points > currentPoints) || rewards[rewards.length - 1];
   const progress = nextReward ? (currentPoints / nextReward.points) * 100 : 100;
 
   return (
@@ -52,9 +73,7 @@ export default function LoyaltyPanel() {
               <span className="font-medium">{nextReward.name}</span>
             </div>
             <Progress value={progress} className="h-2" />
-            <p className="text-xs text-center text-muted-foreground">
-              Noch {nextReward.points - currentPoints} Punkte
-            </p>
+            <p className="text-xs text-center text-muted-foreground">Noch {nextReward.points - currentPoints} Punkte</p>
           </div>
         )}
 
@@ -62,17 +81,15 @@ export default function LoyaltyPanel() {
         <div className="space-y-3">
           <h4 className="font-semibold">Belohnungen</h4>
           <div className="grid gap-2">
-            {rewards.map(reward => {
+            {rewards.map((reward) => {
               const Icon = reward.icon;
               const isAvailable = currentPoints >= reward.points;
-              
+
               return (
                 <div
                   key={reward.id}
                   className={`flex items-center justify-between p-3 rounded-lg border ${
-                    isAvailable 
-                      ? 'border-primary bg-primary/5' 
-                      : 'border-border bg-secondary/50'
+                    isAvailable ? 'border-primary bg-primary/5' : 'border-border bg-secondary/50'
                   }`}
                 >
                   <div className="flex items-center gap-3">
@@ -97,7 +114,7 @@ export default function LoyaltyPanel() {
         <div className="pt-4 border-t border-border">
           <div className="flex justify-between text-sm">
             <span className="text-muted-foreground">Fahrten insgesamt</span>
-            <span className="font-medium">{profile.total_rides}</span>
+            <span className="font-medium">{totalRides ?? '—'}</span>
           </div>
         </div>
       </CardContent>
