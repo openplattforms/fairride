@@ -8,7 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Location } from '@/types/ride';
 import LocationSearch from './LocationSearch';
 import MapView from '@/components/map/MapView';
-import { Navigation, Gift, Star, Loader2, Clock, Calendar } from 'lucide-react';
+import { Navigation, Gift, Star, Loader2, Clock, Calendar, Percent } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,13 +23,20 @@ export default function RideBooking() {
   const [dropoff, setDropoff] = useState<Location | null>(null);
   const [pickupAddress, setPickupAddress] = useState('');
   const [dropoffAddress, setDropoffAddress] = useState('');
+  const [pickupHouseNumber, setPickupHouseNumber] = useState('');
+  const [dropoffHouseNumber, setDropoffHouseNumber] = useState('');
   const [selectingLocation, setSelectingLocation] = useState<'pickup' | 'dropoff' | null>(null);
   const [loading, setLoading] = useState(false);
   const [priceLoading, setPriceLoading] = useState(false);
   const [estimatedPrice, setEstimatedPrice] = useState<number | null>(null);
+  const [originalPrice, setOriginalPrice] = useState<number | null>(null);
   const [priceBreakdown, setPriceBreakdown] = useState<any>(null);
   const [estimatedDuration, setEstimatedDuration] = useState<number | null>(null);
   const [scheduledTime, setScheduledTime] = useState('');
+  const [discount, setDiscount] = useState<{ type: string; amount: number } | null>(null);
+
+  // Check if today's discount applies (30% today)
+  const isTodayDiscount = true; // Always 30% discount today as per requirements
 
   // Set current location as pickup
   useEffect(() => {
@@ -43,13 +50,11 @@ export default function RideBooking() {
   useEffect(() => {
     if (pickup && dropoff) {
       const distance = calculateDistance(pickup, dropoff);
-      const duration = Math.round(distance * 3); // ~3 min per km
+      const duration = Math.round(distance * 3);
       setEstimatedDuration(duration);
-      
-      // Call AI for price calculation
       calculateAIPrice(distance, duration);
     }
-  }, [pickup, dropoff, pickupAddress, dropoffAddress]);
+  }, [pickup, dropoff, pickupAddress, dropoffAddress, pickupHouseNumber, dropoffHouseNumber]);
 
   const calculateDistance = (from: Location, to: Location): number => {
     const R = 6371;
@@ -66,6 +71,13 @@ export default function RideBooking() {
   const calculateAIPrice = async (distance: number, duration: number) => {
     setPriceLoading(true);
     try {
+      const fullPickupAddress = pickupHouseNumber 
+        ? `${pickupAddress} ${pickupHouseNumber}` 
+        : pickupAddress;
+      const fullDropoffAddress = dropoffHouseNumber 
+        ? `${dropoffAddress} ${dropoffHouseNumber}` 
+        : dropoffAddress;
+
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/calculate-price`, {
         method: 'POST',
         headers: {
@@ -75,8 +87,8 @@ export default function RideBooking() {
         body: JSON.stringify({
           distance_km: distance,
           duration_minutes: duration,
-          pickup_address: pickupAddress,
-          dropoff_address: dropoffAddress,
+          pickup_address: fullPickupAddress,
+          dropoff_address: fullDropoffAddress,
         }),
       });
 
@@ -85,24 +97,44 @@ export default function RideBooking() {
       }
 
       const data = await response.json();
+      let basePrice = data.price;
+      setOriginalPrice(basePrice);
+      setPriceBreakdown(data.breakdown);
       
-      // Apply first ride discount
-      let finalPrice = data.price;
-      if (profile && !profile.first_ride_used) {
+      // Apply discounts
+      let finalPrice = basePrice;
+      let discountApplied = null;
+
+      // First ride free only if price under 20€
+      if (profile && !profile.first_ride_used && basePrice < 20) {
         finalPrice = 0;
+        discountApplied = { type: 'Erste Fahrt gratis!', amount: basePrice };
+      } 
+      // 30% discount today for all rides
+      else if (isTodayDiscount) {
+        const discountAmount = basePrice * 0.3;
+        finalPrice = basePrice - discountAmount;
+        discountApplied = { type: '30% Rabatt heute!', amount: discountAmount };
       }
 
       setEstimatedPrice(Math.round(finalPrice * 100) / 100);
-      setPriceBreakdown(data.breakdown);
+      setDiscount(discountApplied);
     } catch (error) {
       console.error('AI price error:', error);
       // Fallback calculation
       const basePrice = 3.5;
       const pricePerKm = 1.5;
       let price = basePrice + distance * pricePerKm;
+      setOriginalPrice(price);
       
-      if (profile && !profile.first_ride_used) {
+      // Apply discounts in fallback too
+      if (profile && !profile.first_ride_used && price < 20) {
+        setDiscount({ type: 'Erste Fahrt gratis!', amount: price });
         price = 0;
+      } else if (isTodayDiscount) {
+        const discountAmount = price * 0.3;
+        setDiscount({ type: '30% Rabatt heute!', amount: discountAmount });
+        price = price - discountAmount;
       }
       
       setEstimatedPrice(Math.round(price * 100) / 100);
@@ -130,28 +162,49 @@ export default function RideBooking() {
     setLoading(true);
     try {
       const distance = calculateDistance(pickup, dropoff);
-      
+      const fullPickupAddress = pickupHouseNumber 
+        ? `${pickupAddress} ${pickupHouseNumber}` 
+        : pickupAddress;
+      const fullDropoffAddress = dropoffHouseNumber 
+        ? `${dropoffAddress} ${dropoffHouseNumber}` 
+        : dropoffAddress;
+
+      // Determine promo details
+      const isFirstRideFree = profile && !profile.first_ride_used && (originalPrice || 0) < 20;
+      const promoDiscount = discount?.amount || 0;
+      const promoType = discount?.type || null;
+
       const { data, error } = await supabase
         .from('rides')
         .insert({
           customer_id: user.id,
           pickup_lat: pickup.lat,
           pickup_lng: pickup.lng,
-          pickup_address: pickupAddress,
+          pickup_address: fullPickupAddress,
           dropoff_lat: dropoff.lat,
           dropoff_lng: dropoff.lng,
-          dropoff_address: dropoffAddress,
+          dropoff_address: fullDropoffAddress,
           status: 'pending',
-          price: estimatedPrice || 0,
+          price: originalPrice || 0, // Store original price
           distance_km: distance,
           duration_minutes: estimatedDuration || 0,
-          first_ride_discount: profile && !profile.first_ride_used,
+          first_ride_discount: isFirstRideFree,
+          promo_discount: promoDiscount,
+          promo_type: promoType,
           scheduled_time: scheduledTime ? new Date(scheduledTime).toISOString() : null,
         })
         .select()
         .single();
 
       if (error) throw error;
+
+      // Mark first ride as used if applicable
+      if (isFirstRideFree) {
+        await supabase
+          .from('profiles')
+          .update({ first_ride_used: true })
+          .eq('user_id', user.id);
+      }
 
       toast({
         title: 'Fahrt angefragt!',
@@ -194,27 +247,35 @@ export default function RideBooking() {
       {/* Booking Panel */}
       <Card className="rounded-t-3xl border-t border-border bg-card shadow-2xl animate-slide-up">
         <CardContent className="p-6 space-y-4">
-          {/* Loyalty Info */}
-          {profile && (
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2">
-                <Star className="w-4 h-4 text-yellow-500" />
-                <span className="font-medium">{profile.loyalty_points} Punkte</span>
-              </div>
-              {!profile.first_ride_used && (
-                <div className="flex items-center gap-2 text-primary font-semibold">
-                  <Gift className="w-4 h-4" />
-                  <span>Erste Fahrt gratis!</span>
+          {/* Loyalty Info & Promo Banner */}
+          <div className="space-y-2">
+            {profile && (
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <Star className="w-4 h-4 text-yellow-500" />
+                  <span className="font-medium">{profile.loyalty_points} Punkte</span>
                 </div>
-              )}
-            </div>
-          )}
+                {!profile.first_ride_used && (
+                  <div className="flex items-center gap-2 text-primary font-semibold">
+                    <Gift className="w-4 h-4" />
+                    <span>Erste Fahrt gratis (unter 20€)!</span>
+                  </div>
+                )}
+              </div>
+            )}
+            {isTodayDiscount && (
+              <div className="bg-primary/10 border border-primary/20 rounded-lg px-3 py-2 flex items-center gap-2">
+                <Percent className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium text-primary">Heute: 30% Rabatt auf alle Fahrten!</span>
+              </div>
+            )}
+          </div>
 
-          {/* Location Inputs */}
+          {/* Location Inputs with House Number */}
           <div className="space-y-3">
             <div onClick={() => setSelectingLocation('pickup')}>
               <LocationSearch
-                placeholder="Abholort"
+                placeholder="Abholort (Straße)"
                 value={pickupAddress}
                 onChange={setPickupAddress}
                 onSelect={(loc, addr) => {
@@ -222,12 +283,14 @@ export default function RideBooking() {
                   setPickupAddress(addr);
                 }}
                 icon="pickup"
+                houseNumber={pickupHouseNumber}
+                onHouseNumberChange={setPickupHouseNumber}
               />
             </div>
 
             <div onClick={() => setSelectingLocation('dropoff')}>
               <LocationSearch
-                placeholder="Wohin?"
+                placeholder="Zielort (Straße)"
                 value={dropoffAddress}
                 onChange={setDropoffAddress}
                 onSelect={(loc, addr) => {
@@ -235,6 +298,8 @@ export default function RideBooking() {
                   setDropoffAddress(addr);
                 }}
                 icon="dropoff"
+                houseNumber={dropoffHouseNumber}
+                onHouseNumberChange={setDropoffHouseNumber}
               />
             </div>
           </div>
@@ -269,18 +334,30 @@ export default function RideBooking() {
                   {priceLoading ? (
                     <Loader2 className="w-5 h-5 animate-spin ml-auto" />
                   ) : (
-                    <p className="font-bold text-2xl">
-                      {profile && !profile.first_ride_used ? (
-                        <span className="text-primary">Gratis</span>
-                      ) : (
-                        `${estimatedPrice?.toFixed(2)} €`
+                    <div>
+                      {discount && (
+                        <p className="text-xs text-primary font-medium">{discount.type}</p>
                       )}
-                    </p>
+                      <div className="flex items-center gap-2 justify-end">
+                        {originalPrice && originalPrice !== estimatedPrice && (
+                          <span className="text-sm line-through text-muted-foreground">
+                            {originalPrice.toFixed(2)} €
+                          </span>
+                        )}
+                        <p className="font-bold text-2xl">
+                          {estimatedPrice === 0 ? (
+                            <span className="text-primary">Gratis</span>
+                          ) : (
+                            `${estimatedPrice?.toFixed(2)} €`
+                          )}
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
               
-              {priceBreakdown && !profile?.first_ride_used && (
+              {priceBreakdown && estimatedPrice !== 0 && (
                 <div className="text-xs text-muted-foreground space-y-1 border-t border-border pt-2">
                   <div className="flex justify-between">
                     <span>Grundpreis</span>
@@ -298,6 +375,12 @@ export default function RideBooking() {
                     <div className="flex justify-between">
                       <span>Kraftstoffzuschlag</span>
                       <span>{priceBreakdown.fuel_surcharge?.toFixed(2)} €</span>
+                    </div>
+                  )}
+                  {discount && (
+                    <div className="flex justify-between text-primary font-medium">
+                      <span>{discount.type}</span>
+                      <span>-{discount.amount.toFixed(2)} €</span>
                     </div>
                   )}
                 </div>

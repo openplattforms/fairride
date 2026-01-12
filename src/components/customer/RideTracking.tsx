@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { Location } from '@/types/ride';
 import MapView from '@/components/map/MapView';
+import RideChat from './RideChat';
 import { Phone, MessageCircle, X, Car, Clock, MapPin, AlertTriangle, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -17,6 +18,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 
 interface RideTrackingProps {
   rideId: string;
@@ -36,6 +44,9 @@ interface RideData {
   status: string;
   price: number;
   distance_km: number | null;
+  first_ride_discount: boolean | null;
+  promo_discount: number | null;
+  promo_type: string | null;
 }
 
 interface DriverInfo {
@@ -54,7 +65,7 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
   const [eta, setEta] = useState<number | null>(null);
   const [speed, setSpeed] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState(false);
-  const [cancellationFee, setCancellationFee] = useState<number | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
   const locationPollRef = useRef<NodeJS.Timeout | null>(null);
 
   // Subscribe to ride updates
@@ -193,18 +204,16 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
     
     // If driver is still far from pickup, minimal fee
     if (distanceToPickup > 2) {
-      // Just charge for driver's travel so far (proportional)
-      const driverTraveledKm = Math.max(0, 5 - distanceToPickup); // Assume started from ~5km away
-      return Math.round(driverTraveledKm * 1.5 * 100) / 100; // 1.50€/km
+      const driverTraveledKm = Math.max(0, 5 - distanceToPickup);
+      return Math.round(driverTraveledKm * 1.5 * 100) / 100;
     }
     
     // If arriving or in progress, proportional fee
     if (ride.status === 'arriving') {
-      return Math.round(Number(ride.price) * 0.3 * 100) / 100; // 30% fee
+      return Math.round(Number(ride.price) * 0.3 * 100) / 100;
     }
     
     if (ride.status === 'in_progress') {
-      // Calculate proportion traveled
       const distanceToDropoff = calculateDistance(driverLocation, dropoffLocation);
       const proportionTraveled = 1 - (distanceToDropoff / totalDistance);
       return Math.round(Number(ride.price) * Math.max(0.5, proportionTraveled) * 100) / 100;
@@ -216,7 +225,6 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
   const handleCancelRide = async () => {
     setCancelling(true);
     const fee = calculateCancellationFee();
-    setCancellationFee(fee);
 
     const { error } = await supabase
       .from('rides')
@@ -255,6 +263,27 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
     }
   };
 
+  // Calculate display price with discounts
+  const getDisplayPrice = (): { price: number; originalPrice: number | null; discount: string | null } => {
+    if (!ride) return { price: 0, originalPrice: null, discount: null };
+    
+    const originalPrice = Number(ride.price);
+    
+    if (ride.first_ride_discount) {
+      return { price: 0, originalPrice, discount: 'Erste Fahrt gratis!' };
+    }
+    
+    if (ride.promo_discount && ride.promo_discount > 0) {
+      return { 
+        price: originalPrice - Number(ride.promo_discount), 
+        originalPrice, 
+        discount: `${ride.promo_type || '30% Rabatt'}` 
+      };
+    }
+    
+    return { price: originalPrice, originalPrice: null, discount: null };
+  };
+
   if (!ride) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
@@ -268,6 +297,7 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
 
   const pickupLocation: Location = { lat: ride.pickup_lat, lng: ride.pickup_lng };
   const dropoffLocation: Location = { lat: ride.dropoff_lat, lng: ride.dropoff_lng };
+  const priceInfo = getDisplayPrice();
 
   // Show searching animation when pending
   if (ride.status === 'pending') {
@@ -339,8 +369,24 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Button size="icon" variant="outline" className="rounded-full"><Phone className="w-4 h-4" /></Button>
-                  <Button size="icon" variant="outline" className="rounded-full"><MessageCircle className="w-4 h-4" /></Button>
+                  {driverInfo.phone && (
+                    <Button size="icon" variant="outline" className="rounded-full" asChild>
+                      <a href={`tel:${driverInfo.phone}`}><Phone className="w-4 h-4" /></a>
+                    </Button>
+                  )}
+                  <Sheet open={chatOpen} onOpenChange={setChatOpen}>
+                    <SheetTrigger asChild>
+                      <Button size="icon" variant="outline" className="rounded-full">
+                        <MessageCircle className="w-4 h-4" />
+                      </Button>
+                    </SheetTrigger>
+                    <SheetContent side="bottom" className="h-[70vh]">
+                      <SheetHeader>
+                        <SheetTitle>Chat mit {driverInfo.full_name}</SheetTitle>
+                      </SheetHeader>
+                      <RideChat rideId={rideId} />
+                    </SheetContent>
+                  </Sheet>
                 </div>
               </div>
               <div className="space-y-3 py-3 border-t border-border">
@@ -355,7 +401,19 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
               </div>
               <div className="flex items-center justify-between py-3 px-4 bg-secondary rounded-xl">
                 <span className="text-muted-foreground">Preis</span>
-                <span className="font-bold text-2xl">{Number(ride.price).toFixed(2)} €</span>
+                <div className="text-right">
+                  {priceInfo.discount && (
+                    <div className="text-xs text-primary font-medium">{priceInfo.discount}</div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    {priceInfo.originalPrice && priceInfo.originalPrice !== priceInfo.price && (
+                      <span className="text-sm line-through text-muted-foreground">{priceInfo.originalPrice.toFixed(2)} €</span>
+                    )}
+                    <span className="font-bold text-2xl">
+                      {priceInfo.price === 0 ? 'Gratis' : `${priceInfo.price.toFixed(2)} €`}
+                    </span>
+                  </div>
+                </div>
               </div>
             </>
           )}
@@ -392,126 +450,6 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-  const pickupLocation: Location = { lat: ride.pickup_lat, lng: ride.pickup_lng };
-  const dropoffLocation: Location = { lat: ride.dropoff_lat, lng: ride.dropoff_lng };
-
-  return (
-    <div className="h-screen flex flex-col bg-background">
-      {/* Map */}
-      <div className="flex-1 relative">
-        <MapView
-          center={driverLocation || pickupLocation}
-          pickup={pickupLocation}
-          dropoff={dropoffLocation}
-          driverLocation={driverLocation}
-          showRoute
-          className="h-full"
-        />
-
-        {/* Status Badge */}
-        <div className="absolute top-4 left-4 right-4">
-          <div className="bg-card/95 backdrop-blur-sm px-4 py-3 rounded-xl border border-border shadow-lg">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-primary rounded-full animate-pulse" />
-                <span className="font-medium">{getStatusText()}</span>
-              </div>
-              {eta && (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Clock className="w-4 h-4" />
-                  <span className="font-semibold">{eta} min</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Speed indicator */}
-        {speed !== null && ride.status !== 'pending' && (
-          <div className="absolute top-20 right-4 bg-card/95 backdrop-blur-sm px-4 py-2 rounded-xl border border-border shadow-lg">
-            <p className="text-xl font-bold">{Math.round(speed)} km/h</p>
-          </div>
-        )}
-      </div>
-
-      {/* Driver Info Panel */}
-      <Card className="rounded-t-3xl border-t border-border bg-card shadow-2xl animate-slide-up">
-        <CardContent className="p-6 space-y-4">
-          {driverInfo ? (
-            <>
-              {/* Driver Details */}
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 bg-secondary rounded-full flex items-center justify-center">
-                  <Car className="w-7 h-7 text-primary" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-lg">{driverInfo.full_name}</h3>
-                  <p className="text-sm text-muted-foreground">
-                    {driverInfo.vehicle_model} • {driverInfo.vehicle_plate}
-                  </p>
-                  <div className="flex items-center gap-1 mt-1">
-                    <span className="text-yellow-500">★</span>
-                    <span className="text-sm font-medium">{driverInfo.rating.toFixed(1)}</span>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button size="icon" variant="outline" className="rounded-full">
-                    <Phone className="w-4 h-4" />
-                  </Button>
-                  <Button size="icon" variant="outline" className="rounded-full">
-                    <MessageCircle className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-
-              {/* Route Info */}
-              <div className="space-y-3 py-3 border-t border-border">
-                <div className="flex items-start gap-3">
-                  <div className="w-3 h-3 bg-primary rounded-full mt-1.5" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Abholung</p>
-                    <p className="font-medium">{ride.pickup_address || 'Abholort'}</p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <MapPin className="w-4 h-4 text-destructive mt-1" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Ziel</p>
-                    <p className="font-medium">{ride.dropoff_address || 'Zielort'}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Price */}
-              <div className="flex items-center justify-between py-3 px-4 bg-secondary rounded-xl">
-                <span className="text-muted-foreground">Preis</span>
-                <span className="font-bold text-2xl">{Number(ride.price).toFixed(2)} €</span>
-              </div>
-            </>
-          ) : (
-            <div className="text-center py-8">
-              <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4" />
-              <p className="text-muted-foreground">Suche nach verfügbaren Fahrern...</p>
-            </div>
-          )}
-
-          {/* Cancel Button */}
-          {ride.status === 'pending' && (
-            <Button
-              variant="outline"
-              className="w-full rounded-xl"
-              onClick={handleCancelRide}
-            >
-              <X className="w-4 h-4 mr-2" />
-              Fahrt stornieren
-            </Button>
           )}
         </CardContent>
       </Card>
