@@ -4,8 +4,16 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { Location } from '@/types/ride';
 import MapView from '@/components/map/MapView';
-import { Navigation, Phone, MapPin, CheckCircle, ArrowRight, User } from 'lucide-react';
+import RideChat from './RideChat';
+import { Navigation, Phone, MapPin, CheckCircle, ArrowRight, User, MessageCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 
 interface RideData {
   id: string;
@@ -36,6 +44,7 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
   const [speed, setSpeed] = useState<number>(0);
   const [lastLocation, setLastLocation] = useState<Location | null>(null);
   const [lastTime, setLastTime] = useState<number>(Date.now());
+  const [chatOpen, setChatOpen] = useState(false);
 
   // Fetch customer info
   useEffect(() => {
@@ -215,9 +224,30 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
                   <p className="text-sm text-muted-foreground">Kunde</p>
                 </div>
               </div>
-              <Button size="icon" variant="outline" className="rounded-full">
-                <Phone className="w-4 h-4" />
-              </Button>
+
+              <div className="flex items-center gap-2">
+                {customerInfo.phone && (
+                  <Button size="icon" variant="outline" className="rounded-full" asChild>
+                    <a href={`tel:${customerInfo.phone}`}>
+                      <Phone className="w-4 h-4" />
+                    </a>
+                  </Button>
+                )}
+
+                <Sheet open={chatOpen} onOpenChange={setChatOpen}>
+                  <SheetTrigger asChild>
+                    <Button size="icon" variant="outline" className="rounded-full">
+                      <MessageCircle className="w-4 h-4" />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="bottom" className="h-[70vh]">
+                    <SheetHeader>
+                      <SheetTitle>Chat mit {customerInfo.name}</SheetTitle>
+                    </SheetHeader>
+                    <RideChat rideId={ride.id} customerName={customerInfo.name} />
+                  </SheetContent>
+                </Sheet>
+              </div>
             </div>
           )}
 
@@ -258,6 +288,24 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
             <span className="text-muted-foreground">Verdienst</span>
             <span className="text-2xl font-bold text-primary">{Number(ride.price).toFixed(2)} €</span>
           </div>
+
+          {/* Navigation */}
+          {currentLocation && (
+            <Button
+              variant="outline"
+              className="w-full rounded-xl"
+              onClick={() => {
+                const dest =
+                  rideState.status === 'arriving' || rideState.status === 'accepted'
+                    ? `${ride.pickup_lat},${ride.pickup_lng}`
+                    : `${ride.dropoff_lat},${ride.dropoff_lng}`;
+                window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`, '_blank');
+              }}
+            >
+              <Navigation className="w-4 h-4 mr-2" />
+              Navi öffnen
+            </Button>
+          )}
 
           {/* Action Button */}
           {nextAction && (
