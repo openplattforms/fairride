@@ -38,31 +38,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const hydrateFromSession = async (session: Session | null) => {
       setSession(session);
       setUser(session?.user ?? null);
-      
+
       if (session?.user) {
-        setTimeout(async () => {
-          await fetchProfile(session.user.id);
-          await fetchRole(session.user.id);
-        }, 0);
+        // Ensure role is known before we mark loading=false (prevents drivers seeing customer UI briefly)
+        await Promise.all([fetchProfile(session.user.id), fetchRole(session.user.id)]);
       } else {
         setProfile(null);
         setRole(null);
       }
+
       setLoading(false);
+    };
+
+    setLoading(true);
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setLoading(true);
+      await hydrateFromSession(session);
     });
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-        fetchRole(session.user.id);
-      }
-      setLoading(false);
-    });
+    supabase.auth.getSession().then(({ data: { session } }) => hydrateFromSession(session));
 
     return () => subscription.unsubscribe();
   }, []);
@@ -80,15 +80,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const fetchRole = async (userId: string) => {
+    // Prefer driver over customer if multiple roles exist (common if default role was inserted on signup)
     const { data, error } = await supabase
       .from('user_roles')
       .select('role')
-      .eq('user_id', userId)
-      .single();
+      .eq('user_id', userId);
 
-    if (data && !error) {
-      setRole(data.role as UserRole['role']);
-    }
+    if (error || !data) return;
+
+    const roles = (data as Array<{ role: UserRole['role'] }>).map((r) => r.role);
+    const resolved: UserRole['role'] = roles.includes('driver')
+      ? 'driver'
+      : roles.includes('admin')
+        ? 'admin'
+        : 'customer';
+
+    setRole(resolved);
   };
 
   const signUp = async (email: string, password: string, name: string, phone: string, role: 'customer' | 'driver') => {
@@ -97,14 +104,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       options: {
         emailRedirectTo: window.location.origin,
-        data: { full_name: name }
-      }
+        data: { full_name: name },
+      },
     });
 
     if (error) throw error;
 
     if (data.user) {
-      // Update profile with phone (profile is auto-created by trigger)
+      // Update profile with phone
       const { error: profileError } = await supabase
         .from('profiles')
         .update({ full_name: name, phone })
@@ -112,22 +119,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (profileError) console.error('Profile update error:', profileError);
 
-      // Add role if driver (customer is default)
       if (role === 'driver') {
+        // Ensure the user ends up with ONLY the driver role (prevents routing to customer UI)
+        await supabase.from('user_roles').delete().eq('user_id', data.user.id);
+
         const { error: roleError } = await supabase
           .from('user_roles')
           .insert({ user_id: data.user.id, role: 'driver' });
 
         if (roleError) console.error('Role insert error:', roleError);
 
-        // Create driver record
         const { error: driverError } = await supabase
           .from('drivers')
           .insert({
             user_id: data.user.id,
             vehicle_model: 'Standard',
             vehicle_plate: '',
-            is_online: false
+            is_online: false,
           });
 
         if (driverError) console.error('Driver insert error:', driverError);

@@ -242,6 +242,18 @@ export default function DriverDashboard() {
     );
   }
 
+  // If there is an active ride, show the active ride screen (with chat + navigation)
+  if (activeRide && driverId) {
+    return (
+      <ActiveRide
+        ride={activeRide}
+        driverId={driverId}
+        currentLocation={currentLocation}
+        onComplete={handleRideComplete}
+      />
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Map */}
