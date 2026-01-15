@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
@@ -13,10 +13,20 @@ import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+function extractHouseNumberFromFormattedAddress(address: string) {
+  // expects "Street 12a, City" or "Street, City"
+  const firstPart = address.split(',')[0] ?? address;
+  const match = firstPart.match(/^(.*?)(?:\s+(\d+[a-zA-Z]?))\s*$/);
+  return {
+    street: match ? match[1].trim() : firstPart.trim(),
+    houseNumber: match ? (match[2] || '').trim() : '',
+  };
+}
+
 export default function RideBooking() {
   const { profile, user } = useAuth();
   const { location: currentLocation } = useGeolocation(true);
-  const { getAddress } = useReverseGeocode();
+  const { getAddress, searchAddress } = useReverseGeocode();
   const { toast } = useToast();
 
   const [pickup, setPickup] = useState<Location | null>(null);
@@ -36,15 +46,46 @@ export default function RideBooking() {
   const [discount, setDiscount] = useState<{ type: string; amount: number } | null>(null);
 
   // Check if today's discount applies (30% today)
-  const isTodayDiscount = true; // Always 30% discount today as per requirements
+  const isTodayDiscount = true;
 
-  // Set current location as pickup
+  const fullPickupAddress = useMemo(
+    () => (pickupHouseNumber ? `${pickupAddress} ${pickupHouseNumber}` : pickupAddress).trim(),
+    [pickupAddress, pickupHouseNumber]
+  );
+  const fullDropoffAddress = useMemo(
+    () => (dropoffHouseNumber ? `${dropoffAddress} ${dropoffHouseNumber}` : dropoffAddress).trim(),
+    [dropoffAddress, dropoffHouseNumber]
+  );
+
+  // Set current location as pickup (best-effort; might not include house number)
   useEffect(() => {
-    if (currentLocation && !pickup) {
+    if (currentLocation && !pickup && !pickupAddress) {
       setPickup(currentLocation);
-      getAddress(currentLocation).then(setPickupAddress);
+      getAddress(currentLocation).then((addr) => {
+        setPickupAddress(addr.split(',')[0] ?? addr);
+        const { houseNumber } = extractHouseNumberFromFormattedAddress(addr);
+        if (houseNumber) setPickupHouseNumber(houseNumber);
+      });
     }
-  }, [currentLocation, pickup, getAddress]);
+  }, [currentLocation, pickup, pickupAddress, getAddress]);
+
+  // If user types/changes house number, refine pickup/dropoff pin by geocoding full address.
+  useEffect(() => {
+    const refine = async (kind: 'pickup' | 'dropoff') => {
+      const base = kind === 'pickup' ? pickupAddress : dropoffAddress;
+      const hn = kind === 'pickup' ? pickupHouseNumber : dropoffHouseNumber;
+      if (!base || !hn) return;
+
+      const results = await searchAddress(`${base} ${hn}`);
+      if (results.length === 0) return;
+
+      if (kind === 'pickup') setPickup(results[0].location);
+      else setDropoff(results[0].location);
+    };
+
+    refine('pickup');
+    refine('dropoff');
+  }, [pickupAddress, pickupHouseNumber, dropoffAddress, dropoffHouseNumber, searchAddress]);
 
   // Calculate price with AI when route changes
   useEffect(() => {
@@ -53,17 +94,24 @@ export default function RideBooking() {
       const duration = Math.round(distance * 3);
       setEstimatedDuration(duration);
       calculateAIPrice(distance, duration);
+    } else {
+      setEstimatedPrice(null);
+      setOriginalPrice(null);
+      setPriceBreakdown(null);
+      setEstimatedDuration(null);
+      setDiscount(null);
     }
-  }, [pickup, dropoff, pickupAddress, dropoffAddress, pickupHouseNumber, dropoffHouseNumber]);
+  }, [pickup, dropoff, fullPickupAddress, fullDropoffAddress]);
 
   const calculateDistance = (from: Location, to: Location): number => {
     const R = 6371;
-    const dLat = (to.lat - from.lat) * Math.PI / 180;
-    const dLon = (to.lng - from.lng) * Math.PI / 180;
+    const dLat = ((to.lat - from.lat) * Math.PI) / 180;
+    const dLon = ((to.lng - from.lng) * Math.PI) / 180;
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(from.lat * Math.PI / 180) * Math.cos(to.lat * Math.PI / 180) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      (Math.cos((from.lat * Math.PI) / 180) * Math.cos((to.lat * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2));
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   };
@@ -71,18 +119,11 @@ export default function RideBooking() {
   const calculateAIPrice = async (distance: number, duration: number) => {
     setPriceLoading(true);
     try {
-      const fullPickupAddress = pickupHouseNumber 
-        ? `${pickupAddress} ${pickupHouseNumber}` 
-        : pickupAddress;
-      const fullDropoffAddress = dropoffHouseNumber 
-        ? `${dropoffAddress} ${dropoffHouseNumber}` 
-        : dropoffAddress;
-
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/calculate-price`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
         body: JSON.stringify({
           distance_km: distance,
@@ -97,19 +138,19 @@ export default function RideBooking() {
       }
 
       const data = await response.json();
-      let basePrice = data.price;
+      const basePrice = data.price;
       setOriginalPrice(basePrice);
       setPriceBreakdown(data.breakdown);
-      
+
       // Apply discounts
       let finalPrice = basePrice;
-      let discountApplied = null;
+      let discountApplied: { type: string; amount: number } | null = null;
 
       // First ride free only if price under 20€
       if (profile && !profile.first_ride_used && basePrice < 20) {
         finalPrice = 0;
         discountApplied = { type: 'Erste Fahrt gratis!', amount: basePrice };
-      } 
+      }
       // 30% discount today for all rides
       else if (isTodayDiscount) {
         const discountAmount = basePrice * 0.3;
@@ -126,7 +167,7 @@ export default function RideBooking() {
       const pricePerKm = 1.5;
       let price = basePrice + distance * pricePerKm;
       setOriginalPrice(price);
-      
+
       // Apply discounts in fallback too
       if (profile && !profile.first_ride_used && price < 20) {
         setDiscount({ type: 'Erste Fahrt gratis!', amount: price });
@@ -136,7 +177,7 @@ export default function RideBooking() {
         setDiscount({ type: '30% Rabatt heute!', amount: discountAmount });
         price = price - discountAmount;
       }
-      
+
       setEstimatedPrice(Math.round(price * 100) / 100);
     } finally {
       setPriceLoading(false);
@@ -145,13 +186,16 @@ export default function RideBooking() {
 
   const handleMapClick = async (location: Location) => {
     const address = await getAddress(location);
-    
+    const { street, houseNumber } = extractHouseNumberFromFormattedAddress(address);
+
     if (selectingLocation === 'pickup') {
       setPickup(location);
-      setPickupAddress(address);
+      setPickupAddress(street);
+      setPickupHouseNumber(houseNumber);
     } else if (selectingLocation === 'dropoff') {
       setDropoff(location);
-      setDropoffAddress(address);
+      setDropoffAddress(street);
+      setDropoffHouseNumber(houseNumber);
     }
     setSelectingLocation(null);
   };
@@ -159,15 +203,18 @@ export default function RideBooking() {
   const handleBookRide = async () => {
     if (!pickup || !dropoff || !user) return;
 
+    if (!pickupHouseNumber || !dropoffHouseNumber) {
+      toast({
+        title: 'Hausnummer fehlt',
+        description: 'Bitte gib für Abholort und Ziel eine Hausnummer ein, damit der Pin exakt sitzt.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       const distance = calculateDistance(pickup, dropoff);
-      const fullPickupAddress = pickupHouseNumber 
-        ? `${pickupAddress} ${pickupHouseNumber}` 
-        : pickupAddress;
-      const fullDropoffAddress = dropoffHouseNumber 
-        ? `${dropoffAddress} ${dropoffHouseNumber}` 
-        : dropoffAddress;
 
       // Determine promo details
       const isFirstRideFree = profile && !profile.first_ride_used && (originalPrice || 0) < 20;
@@ -200,17 +247,13 @@ export default function RideBooking() {
 
       // Mark first ride as used if applicable
       if (isFirstRideFree) {
-        await supabase
-          .from('profiles')
-          .update({ first_ride_used: true })
-          .eq('user_id', user.id);
+        await supabase.from('profiles').update({ first_ride_used: true }).eq('user_id', user.id);
       }
 
       toast({
         title: 'Fahrt angefragt!',
         description: 'Wir suchen einen Fahrer für dich...',
       });
-
     } catch (error: any) {
       toast({
         title: 'Fehler',
@@ -232,6 +275,24 @@ export default function RideBooking() {
           dropoff={dropoff}
           showRoute={!!pickup && !!dropoff}
           onMapClick={handleMapClick}
+          pickupDraggable={!!pickup}
+          dropoffDraggable={!!dropoff}
+          onPickupChange={(loc) => {
+            setPickup(loc);
+            getAddress(loc).then((addr) => {
+              const { street, houseNumber } = extractHouseNumberFromFormattedAddress(addr);
+              setPickupAddress(street);
+              setPickupHouseNumber(houseNumber);
+            });
+          }}
+          onDropoffChange={(loc) => {
+            setDropoff(loc);
+            getAddress(loc).then((addr) => {
+              const { street, houseNumber } = extractHouseNumberFromFormattedAddress(addr);
+              setDropoffAddress(street);
+              setDropoffHouseNumber(houseNumber);
+            });
+          }}
           className="h-full"
         />
 
@@ -277,14 +338,26 @@ export default function RideBooking() {
               <LocationSearch
                 placeholder="Abholort (Straße)"
                 value={pickupAddress}
-                onChange={setPickupAddress}
-                onSelect={(loc, addr) => {
-                  setPickup(loc);
-                  setPickupAddress(addr);
+                onChange={(v) => {
+                  setPickupAddress(v);
+                  // Pin follows house number – reset precise location until house number present
+                  if (!pickupHouseNumber) setPickup(null);
                 }}
-                icon="pickup"
+                onSelect={(loc, addr) => {
+                  const { street, houseNumber } = extractHouseNumberFromFormattedAddress(addr);
+                  setPickupAddress(street);
+                  if (houseNumber) {
+                    setPickupHouseNumber(houseNumber);
+                    setPickup(loc);
+                  } else {
+                    setPickup(null);
+                  }
+                }}
                 houseNumber={pickupHouseNumber}
-                onHouseNumberChange={setPickupHouseNumber}
+                onHouseNumberChange={(v) => {
+                  setPickupHouseNumber(v);
+                  if (!v) setPickup(null);
+                }}
               />
             </div>
 
@@ -292,16 +365,34 @@ export default function RideBooking() {
               <LocationSearch
                 placeholder="Zielort (Straße)"
                 value={dropoffAddress}
-                onChange={setDropoffAddress}
-                onSelect={(loc, addr) => {
-                  setDropoff(loc);
-                  setDropoffAddress(addr);
+                onChange={(v) => {
+                  setDropoffAddress(v);
+                  if (!dropoffHouseNumber) setDropoff(null);
                 }}
-                icon="dropoff"
+                onSelect={(loc, addr) => {
+                  const { street, houseNumber } = extractHouseNumberFromFormattedAddress(addr);
+                  setDropoffAddress(street);
+                  if (houseNumber) {
+                    setDropoffHouseNumber(houseNumber);
+                    setDropoff(loc);
+                  } else {
+                    setDropoff(null);
+                  }
+                }}
                 houseNumber={dropoffHouseNumber}
-                onHouseNumberChange={setDropoffHouseNumber}
+                onHouseNumberChange={(v) => {
+                  setDropoffHouseNumber(v);
+                  if (!v) setDropoff(null);
+                }}
               />
             </div>
+
+            {(fullPickupAddress || fullDropoffAddress) && (
+              <div className="text-xs text-muted-foreground">
+                {fullPickupAddress && <div>Abholort: <span className="text-foreground">{fullPickupAddress}</span></div>}
+                {fullDropoffAddress && <div>Ziel: <span className="text-foreground">{fullDropoffAddress}</span></div>}
+              </div>
+            )}
           </div>
 
           {/* Schedule Time */}
@@ -335,28 +426,20 @@ export default function RideBooking() {
                     <Loader2 className="w-5 h-5 animate-spin ml-auto" />
                   ) : (
                     <div>
-                      {discount && (
-                        <p className="text-xs text-primary font-medium">{discount.type}</p>
-                      )}
+                      {discount && <p className="text-xs text-primary font-medium">{discount.type}</p>}
                       <div className="flex items-center gap-2 justify-end">
                         {originalPrice && originalPrice !== estimatedPrice && (
-                          <span className="text-sm line-through text-muted-foreground">
-                            {originalPrice.toFixed(2)} €
-                          </span>
+                          <span className="text-sm line-through text-muted-foreground">{originalPrice.toFixed(2)} €</span>
                         )}
                         <p className="font-bold text-2xl">
-                          {estimatedPrice === 0 ? (
-                            <span className="text-primary">Gratis</span>
-                          ) : (
-                            `${estimatedPrice?.toFixed(2)} €`
-                          )}
+                          {estimatedPrice === 0 ? <span className="text-primary">Gratis</span> : `${estimatedPrice?.toFixed(2)} €`}
                         </p>
                       </div>
                     </div>
                   )}
                 </div>
               </div>
-              
+
               {priceBreakdown && estimatedPrice !== 0 && (
                 <div className="text-xs text-muted-foreground space-y-1 border-t border-border pt-2">
                   <div className="flex justify-between">
@@ -408,3 +491,4 @@ export default function RideBooking() {
     </div>
   );
 }
+
