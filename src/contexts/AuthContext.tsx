@@ -38,13 +38,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const hydrateFromSession = async (session: Session | null) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    const hydrateFromSession = async (nextSession: Session | null) => {
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
 
-      if (session?.user) {
+      if (nextSession?.user) {
         // Ensure role is known before we mark loading=false (prevents drivers seeing customer UI briefly)
-        await Promise.all([fetchProfile(session.user.id), fetchRole(session.user.id)]);
+        await Promise.all([fetchProfile(nextSession.user.id), fetchRole(nextSession.user.id)]);
       } else {
         setProfile(null);
         setRole(null);
@@ -57,9 +57,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
       setLoading(true);
-      await hydrateFromSession(session);
+      await hydrateFromSession(nextSession);
     });
 
     supabase.auth.getSession().then(({ data: { session } }) => hydrateFromSession(session));
@@ -80,7 +80,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const fetchRole = async (userId: string) => {
-    // Prefer driver over customer if multiple roles exist (common if default role was inserted on signup)
     const { data, error } = await supabase
       .from('user_roles')
       .select('role')
@@ -93,12 +92,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ? 'driver'
       : roles.includes('admin')
         ? 'admin'
-        : 'customer';
+        : roles.includes('customer')
+          ? 'customer'
+          : 'customer';
 
     setRole(resolved);
   };
 
-  const signUp = async (email: string, password: string, name: string, phone: string, role: 'customer' | 'driver') => {
+  const assignRoleServerSide = async (desiredRole: 'customer' | 'driver') => {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (!accessToken) return;
+
+    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/set-user-role`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ role: desiredRole }),
+    });
+  };
+
+  const signUp = async (email: string, password: string, name: string, phone: string, desiredRole: 'customer' | 'driver') => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -110,8 +126,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (error) throw error;
 
+    // With auto-confirm enabled, session is available immediately.
+    if (data.session) {
+      await assignRoleServerSide(desiredRole);
+    }
+
     if (data.user) {
-      // Update profile with phone
       const { error: profileError } = await supabase
         .from('profiles')
         .update({ full_name: name, phone })
@@ -119,16 +139,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (profileError) console.error('Profile update error:', profileError);
 
-      if (role === 'driver') {
-        // Ensure the user ends up with ONLY the driver role (prevents routing to customer UI)
-        await supabase.from('user_roles').delete().eq('user_id', data.user.id);
-
-        const { error: roleError } = await supabase
-          .from('user_roles')
-          .insert({ user_id: data.user.id, role: 'driver' });
-
-        if (roleError) console.error('Role insert error:', roleError);
-
+      if (desiredRole === 'driver') {
+        // Driver row is safe to create client-side (RLS: auth.uid() = user_id)
         const { error: driverError } = await supabase
           .from('drivers')
           .insert({
@@ -140,6 +152,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (driverError) console.error('Driver insert error:', driverError);
       }
+
+      // Refresh role/profile locally
+      await Promise.all([fetchProfile(data.user.id), fetchRole(data.user.id)]);
     }
   };
 
@@ -181,3 +196,4 @@ export function useAuth() {
   }
   return context;
 }
+

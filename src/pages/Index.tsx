@@ -3,9 +3,12 @@ import AuthForm from '@/components/auth/AuthForm';
 import CustomerDashboard from '@/components/customer/CustomerDashboard';
 import DriverDashboard from '@/components/driver/DriverDashboard';
 import { Loader2 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 const Index = () => {
   const { user, role, loading } = useAuth();
+  const [searchParams] = useSearchParams();
+  const requestedRole = searchParams.get('role') === 'driver' ? 'driver' : 'customer';
 
   if (loading) {
     return (
@@ -19,7 +22,7 @@ const Index = () => {
   }
 
   if (!user) {
-    return <AuthForm />;
+    return <AuthForm defaultRole={requestedRole} />;
   }
 
   // IMPORTANT: Drivers ALWAYS go to DriverDashboard, never to customer panel

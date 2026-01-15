@@ -12,6 +12,10 @@ interface MapViewProps {
   onMapClick?: (location: Location) => void;
   showRoute?: boolean;
   className?: string;
+  pickupDraggable?: boolean;
+  dropoffDraggable?: boolean;
+  onPickupChange?: (location: Location) => void;
+  onDropoffChange?: (location: Location) => void;
 }
 
 const createCustomIcon = (color: string, pulse: boolean = false) => {
@@ -65,6 +69,10 @@ export default function MapView({
   onMapClick,
   showRoute = false,
   className = '',
+  pickupDraggable = false,
+  dropoffDraggable = false,
+  onPickupChange,
+  onDropoffChange,
 }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -99,6 +107,7 @@ export default function MapView({
       map.remove();
       mapInstanceRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Update center
@@ -114,14 +123,23 @@ export default function MapView({
 
     if (pickupMarkerRef.current) {
       mapInstanceRef.current.removeLayer(pickupMarkerRef.current);
+      pickupMarkerRef.current = null;
     }
 
     if (pickup) {
       pickupMarkerRef.current = L.marker([pickup.lat, pickup.lng], {
         icon: createCustomIcon('hsl(142, 76%, 45%)'),
+        draggable: pickupDraggable,
       }).addTo(mapInstanceRef.current);
+
+      if (pickupDraggable && onPickupChange) {
+        pickupMarkerRef.current.on('dragend', (e: any) => {
+          const latlng = e.target.getLatLng();
+          onPickupChange({ lat: latlng.lat, lng: latlng.lng });
+        });
+      }
     }
-  }, [pickup]);
+  }, [pickup, pickupDraggable, onPickupChange]);
 
   // Update dropoff marker
   useEffect(() => {
@@ -129,30 +147,42 @@ export default function MapView({
 
     if (dropoffMarkerRef.current) {
       mapInstanceRef.current.removeLayer(dropoffMarkerRef.current);
+      dropoffMarkerRef.current = null;
     }
 
     if (dropoff) {
       dropoffMarkerRef.current = L.marker([dropoff.lat, dropoff.lng], {
         icon: createCustomIcon('hsl(0, 84%, 60%)'),
+        draggable: dropoffDraggable,
       }).addTo(mapInstanceRef.current);
+
+      if (dropoffDraggable && onDropoffChange) {
+        dropoffMarkerRef.current.on('dragend', (e: any) => {
+          const latlng = e.target.getLatLng();
+          onDropoffChange({ lat: latlng.lat, lng: latlng.lng });
+        });
+      }
     }
-  }, [dropoff]);
+  }, [dropoff, dropoffDraggable, onDropoffChange]);
 
   // Update driver marker
   useEffect(() => {
     if (!mapInstanceRef.current) return;
 
-    if (driverMarkerRef.current) {
-      driverMarkerRef.current.setLatLng([driverLocation!.lat, driverLocation!.lng]);
-    } else if (driverLocation) {
-      driverMarkerRef.current = L.marker([driverLocation.lat, driverLocation.lng], {
-        icon: createCarIcon(),
-      }).addTo(mapInstanceRef.current);
-    }
-
     if (!driverLocation && driverMarkerRef.current) {
       mapInstanceRef.current.removeLayer(driverMarkerRef.current);
       driverMarkerRef.current = null;
+      return;
+    }
+
+    if (driverLocation) {
+      if (driverMarkerRef.current) {
+        driverMarkerRef.current.setLatLng([driverLocation.lat, driverLocation.lng]);
+      } else {
+        driverMarkerRef.current = L.marker([driverLocation.lat, driverLocation.lng], {
+          icon: createCarIcon(),
+        }).addTo(mapInstanceRef.current);
+      }
     }
   }, [driverLocation]);
 
@@ -167,10 +197,7 @@ export default function MapView({
 
     if (showRoute && pickup && dropoff) {
       routeControlRef.current = L.Routing.control({
-        waypoints: [
-          L.latLng(pickup.lat, pickup.lng),
-          L.latLng(dropoff.lat, dropoff.lng),
-        ],
+        waypoints: [L.latLng(pickup.lat, pickup.lng), L.latLng(dropoff.lat, dropoff.lng)],
         routeWhileDragging: false,
         addWaypoints: false,
         fitSelectedRoutes: true,
