@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { Location } from '@/types/ride';
 import MapView from '@/components/map/MapView';
-import RideChat from './RideChat';
-import { Navigation, Phone, MapPin, CheckCircle, ArrowRight, User, MessageCircle } from 'lucide-react';
+import LiveChat from '@/components/chat/LiveChat';
+import { useWakeLock } from '@/hooks/useWakeLock';
+import { Navigation, Phone, MapPin, CheckCircle, ArrowRight, User, MessageCircle, UserCheck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   Sheet,
@@ -45,6 +46,9 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
   const [lastLocation, setLastLocation] = useState<Location | null>(null);
   const [lastTime, setLastTime] = useState<number>(Date.now());
   const [chatOpen, setChatOpen] = useState(false);
+
+  // Keep screen awake during active ride
+  useWakeLock(true);
 
   // Fetch customer info
   useEffect(() => {
@@ -168,11 +172,11 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
   const getNextAction = () => {
     switch (rideState.status) {
       case 'accepted':
-        return { label: 'Zum Abholort navigieren', status: 'arriving' };
+        return { label: 'Zum Abholort navigieren', status: 'arriving', icon: ArrowRight };
       case 'arriving':
-        return { label: 'Kunde abgeholt', status: 'in_progress' };
+        return { label: 'Kunde abgeholt - Check In', status: 'in_progress', icon: UserCheck };
       case 'in_progress':
-        return { label: 'Fahrt abschließen', status: 'completed' };
+        return { label: 'Fahrt abschließen', status: 'completed', icon: CheckCircle };
       default:
         return null;
     }
@@ -241,10 +245,10 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
                     </Button>
                   </SheetTrigger>
                   <SheetContent side="bottom" className="h-[70vh]">
-                    <SheetHeader>
+                  <SheetHeader>
                       <SheetTitle>Chat mit {customerInfo.name}</SheetTitle>
                     </SheetHeader>
-                    <RideChat rideId={ride.id} customerName={customerInfo.name} />
+                    <LiveChat rideId={ride.id} otherPersonName={customerInfo.name} />
                   </SheetContent>
                 </Sheet>
               </div>
@@ -310,14 +314,12 @@ export default function ActiveRide({ ride, driverId, currentLocation, onComplete
           {/* Action Button */}
           {nextAction && (
             <Button
-              className="w-full h-14 text-lg font-semibold rounded-xl transition-all duration-200 hover:scale-[1.02]"
+              className={`w-full h-14 text-lg font-semibold rounded-xl transition-all duration-200 hover:scale-[1.02] ${
+                rideState.status === 'arriving' ? 'bg-green-600 hover:bg-green-700' : ''
+              }`}
               onClick={() => updateRideStatus(nextAction.status)}
             >
-              {nextAction.status === 'completed' ? (
-                <CheckCircle className="w-5 h-5 mr-2" />
-              ) : (
-                <ArrowRight className="w-5 h-5 mr-2" />
-              )}
+              <nextAction.icon className="w-5 h-5 mr-2" />
               {nextAction.label}
             </Button>
           )}

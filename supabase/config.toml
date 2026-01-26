@@ -2,3 +2,9 @@ project_id = "wmqcpjrhbdszwxzhliju"
 
 [functions.calculate-price]
 verify_jwt = false
+
+[functions.set-user-role]
+verify_jwt = false
+
+[functions.find-drivers]
+verify_jwt = false
