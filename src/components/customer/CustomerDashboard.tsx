@@ -4,17 +4,18 @@ import { supabase } from '@/integrations/supabase/client';
 import RideBooking from './RideBooking';
 import RideTracking from './RideTracking';
 import RideHistory from './RideHistory';
+import MyRides from './MyRides';
 import SepaForm from './SepaForm';
 import LoyaltyPanel from '@/components/loyalty/LoyaltyPanel';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
-import { Menu, LogOut, History, CreditCard, Star, User } from 'lucide-react';
+import { Menu, LogOut, History, CreditCard, Star, User, Car } from 'lucide-react';
 
 export default function CustomerDashboard() {
   const { user, profile, signOut } = useAuth();
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activePanel, setActivePanel] = useState<'booking' | 'history' | 'payment' | 'loyalty' | null>(null);
+  const [activePanel, setActivePanel] = useState<'booking' | 'history' | 'payment' | 'loyalty' | 'myrides' | null>(null);
 
   // Check for active ride on mount
   useEffect(() => {
@@ -96,6 +97,17 @@ export default function CustomerDashboard() {
     );
   }
 
+  if (activePanel === 'myrides') {
+    return (
+      <div className="min-h-screen bg-background p-4">
+        <Button variant="ghost" className="mb-4" onClick={() => setActivePanel(null)}>
+          ← Zurück
+        </Button>
+        <MyRides />
+      </div>
+    );
+  }
+
   if (activePanel === 'payment') {
     return (
       <div className="min-h-screen bg-background p-4">
@@ -146,6 +158,14 @@ export default function CustomerDashboard() {
 
             {/* Menu Items */}
             <div className="space-y-2">
+              <Button
+                variant="ghost"
+                className="w-full justify-start"
+                onClick={() => handleMenuAction('myrides')}
+              >
+                <Car className="w-5 h-5 mr-3" />
+                Meine Fahrten
+              </Button>
               <Button
                 variant="ghost"
                 className="w-full justify-start"

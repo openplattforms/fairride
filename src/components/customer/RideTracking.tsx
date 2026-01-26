@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { Location } from '@/types/ride';
 import MapView from '@/components/map/MapView';
-import RideChat from './RideChat';
-import { Phone, MessageCircle, X, Car, Clock, MapPin, AlertTriangle, Loader2 } from 'lucide-react';
+import LiveChat from '@/components/chat/LiveChat';
+import { useWakeLock } from '@/hooks/useWakeLock';
+import { Phone, MessageCircle, X, Car, Clock, MapPin, AlertTriangle, Loader2, CheckCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   AlertDialog,
@@ -67,6 +68,9 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
   const [cancelling, setCancelling] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const locationPollRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Keep screen awake during active ride
+  useWakeLock(ride?.status === 'in_progress' || ride?.status === 'arriving');
 
   // Subscribe to ride updates
   useEffect(() => {
@@ -258,6 +262,8 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
         return 'Fahrt läuft';
       case 'completed':
         return 'Fahrt abgeschlossen';
+      case 'driver_arrived':
+        return 'Fahrer ist angekommen!';
       default:
         return 'Status unbekannt';
     }
@@ -325,16 +331,27 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
     );
   }
 
+  // Show special driver arrived state
+  const showDriverArrived = ride.status === 'arriving' && eta !== null && eta <= 1;
+
   return (
     <div className="h-screen flex flex-col bg-background">
       <div className="flex-1 relative">
         <MapView center={driverLocation || pickupLocation} pickup={pickupLocation} dropoff={dropoffLocation} driverLocation={driverLocation} showRoute className="h-full" />
+        
+        {/* Status bar */}
         <div className="absolute top-4 left-4 right-4">
           <div className="bg-card/95 backdrop-blur-sm px-4 py-3 rounded-xl border border-border shadow-lg">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-primary rounded-full animate-pulse" />
-                <span className="font-medium">{getStatusText()}</span>
+                {showDriverArrived ? (
+                  <CheckCircle className="w-5 h-5 text-primary animate-pulse" />
+                ) : (
+                  <div className="w-3 h-3 bg-primary rounded-full animate-pulse" />
+                )}
+                <span className="font-medium">
+                  {showDriverArrived ? 'Fahrer ist angekommen!' : getStatusText()}
+                </span>
               </div>
               {eta && (
                 <div className="flex items-center gap-2 text-muted-foreground">
@@ -382,10 +399,10 @@ export default function RideTracking({ rideId, onCancel }: RideTrackingProps) {
                     </SheetTrigger>
                     <SheetContent side="bottom" className="h-[70vh]">
                       <SheetHeader>
-                        <SheetTitle>Chat mit {driverInfo.full_name}</SheetTitle>
-                      </SheetHeader>
-                      <RideChat rideId={rideId} />
-                    </SheetContent>
+                    <SheetTitle>Chat mit {driverInfo.full_name}</SheetTitle>
+                    </SheetHeader>
+                    <LiveChat rideId={rideId} otherPersonName={driverInfo.full_name || 'Fahrer'} />
+                  </SheetContent>
                   </Sheet>
                 </div>
               </div>
