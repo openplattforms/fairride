@@ -38,33 +38,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let mounted = true;
+    let initialLoadDone = false;
+    
     const hydrateFromSession = async (nextSession: Session | null) => {
+      if (!mounted) return;
+      
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
 
       if (nextSession?.user) {
-        // Ensure role is known before we mark loading=false (prevents drivers seeing customer UI briefly)
-        await Promise.all([fetchProfile(nextSession.user.id), fetchRole(nextSession.user.id)]);
+        // Fetch profile and role in parallel for speed
+        try {
+          await Promise.all([fetchProfile(nextSession.user.id), fetchRole(nextSession.user.id)]);
+        } catch (e) {
+          console.error('Error fetching user data:', e);
+        }
       } else {
         setProfile(null);
         setRole(null);
       }
 
-      setLoading(false);
+      if (mounted) {
+        setLoading(false);
+        initialLoadDone = true;
+      }
     };
 
-    setLoading(true);
-
+    // Set up auth state listener FIRST
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
-      setLoading(true);
-      await hydrateFromSession(nextSession);
+      // Only process if initial load is done to avoid race conditions
+      if (initialLoadDone) {
+        await hydrateFromSession(nextSession);
+      }
     });
 
-    supabase.auth.getSession().then(({ data: { session } }) => hydrateFromSession(session));
+    // Then get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      hydrateFromSession(session);
+    }).catch((e) => {
+      console.error('Error getting session:', e);
+      if (mounted) {
+        setLoading(false);
+        initialLoadDone = true;
+      }
+    });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const fetchProfile = async (userId: string) => {
