@@ -6,7 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.90.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 serve(async (req) => {
@@ -49,19 +49,47 @@ serve(async (req) => {
 
     const user_id = userData.user.id;
 
-    // Prevent role switching: only set role if user has no roles yet.
+    // Check if user already has a role
     const { data: existing } = await adminClient
       .from("user_roles")
-      .select("role")
+      .select("role, created_at")
       .eq("user_id", user_id);
 
     if (existing && existing.length > 0) {
-      return new Response(JSON.stringify({ ok: true, role: existing[0].role, already_set: true }), {
+      const existingRole = existing[0];
+      const createdAt = new Date(existingRole.created_at);
+      const now = new Date();
+      const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
+
+      // Allow role change only if it was set within the last 60 seconds (fresh signup)
+      // This handles the case where old trigger set 'customer' but user wants 'driver'
+      if (secondsSinceCreation < 60 && existingRole.role !== requestedRole) {
+        const { error: updateErr } = await adminClient
+          .from("user_roles")
+          .update({ role: requestedRole })
+          .eq("user_id", user_id);
+
+        if (updateErr) {
+          return new Response(JSON.stringify({ error: updateErr.message }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        return new Response(JSON.stringify({ ok: true, role: requestedRole, updated: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Role was set more than 60 seconds ago, don't allow change
+      return new Response(JSON.stringify({ ok: true, role: existingRole.role, already_set: true }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    // No existing role, insert new one
     const { error: insertErr } = await adminClient
       .from("user_roles")
       .insert({ user_id, role: requestedRole });

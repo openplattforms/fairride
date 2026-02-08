@@ -128,10 +128,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // With auto-confirm enabled, session is available immediately.
     if (data.session) {
+      // Call edge function to set the desired role
       await assignRoleServerSide(desiredRole);
+      
+      // Wait a tiny bit to ensure the role is written
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     if (data.user) {
+      // Update profile with name and phone
       const { error: profileError } = await supabase
         .from('profiles')
         .update({ full_name: name, phone })
@@ -140,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (profileError) console.error('Profile update error:', profileError);
 
       if (desiredRole === 'driver') {
-        // Driver row is safe to create client-side (RLS: auth.uid() = user_id)
+        // Create driver record (RLS: auth.uid() = user_id)
         const { error: driverError } = await supabase
           .from('drivers')
           .insert({
@@ -153,8 +158,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (driverError) console.error('Driver insert error:', driverError);
       }
 
-      // Refresh role/profile locally
+      // Refresh role/profile locally - this is critical for routing
       await Promise.all([fetchProfile(data.user.id), fetchRole(data.user.id)]);
+      
+      // Force a small delay to ensure state is updated before navigation
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
   };
 
